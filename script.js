@@ -1512,7 +1512,7 @@ window.fazerLogin = async function() {
 
 
         // ==================================================
-        // VERIFICA SE A SENHA DO BANCO DH-PE ESTÁ CORRETA
+        // VERIFICA SE A SENHA DO BANCO DH-ND ESTÁ CORRETA
         // ==================================================
 
         const senhaLocalCorreta =
@@ -1567,7 +1567,7 @@ window.fazerLogin = async function() {
 
             // Existe uma conta Firebase com esse CPF,
             // porém a senha dela não corresponde à senha
-            // atualmente salva no DH-PE.
+            // atualmente salva no DH-ND.
             if (
                 createError.code ===
                 'auth/email-already-in-use'
@@ -7929,7 +7929,7 @@ if ('serviceWorker' in navigator) {
 // ==========================================================
 window.downloadBackup = function() { if(!isSuperAdmin(loggedUser) && (!loggedUser || loggedUser.role !== 'ORGANIZER')) return toast("Sem permissão", "error");
 if(!db) return toast("Sem dados para salvar", "error"); const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(db)); const downloadAnchorNode = document.createElement('a'); downloadAnchorNode.setAttribute("href", dataStr);
-downloadAnchorNode.setAttribute("download", "backup_dhpe_" + new Date().toISOString().slice(0,10) + ".json"); document.body.appendChild(downloadAnchorNode); downloadAnchorNode.click(); downloadAnchorNode.remove(); toast("BACKUP BAIXADO!"); };
+downloadAnchorNode.setAttribute("download", "backup_dh_nd_" + new Date().toISOString().slice(0,10) + ".json"); document.body.appendChild(downloadAnchorNode); downloadAnchorNode.click(); downloadAnchorNode.remove(); toast("BACKUP BAIXADO!"); };
 window.restoreBackup = function() { if(!isSuperAdmin(loggedUser) && (!loggedUser || loggedUser.role !== 'ORGANIZER')) return toast("Sem permissão", "error"); const input = document.getElementById('backup-input-file');
 if(input) input.click(); };
 window.processRestoreFile = function(input) { const file = input.files[0]; if(!file) return; const reader = new FileReader();

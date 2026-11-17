@@ -25110,7 +25110,7 @@ function wrappedShareFileName() {
 
 
   return (
-    `temporada-dhpe-${SYSTEM_YEAR}-${name || 'atleta'}.png`
+    `temporada-dh-nd-${SYSTEM_YEAR}-${name || 'atleta'}.png`
   );
 }
 
