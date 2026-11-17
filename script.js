@@ -50,6 +50,11 @@ window.toggleEventType = function() {
 
     if (offGroup) offGroup.style.display = isNonOfficial ? 'none' : 'block';
     if (nonOffGroup) nonOffGroup.style.display = isNonOfficial ? 'block' : 'none';
+    const choice = document.getElementById('adm-evt-scoring-choice');
+    const scoring = document.getElementById('adm-evt-scoring-group');
+    const enabled = document.getElementById('adm-evt-points-enabled');
+    if (choice) choice.style.display = isNonOfficial ? 'block' : 'none';
+    if (scoring) scoring.style.display = !isNonOfficial || (enabled && enabled.value === 'true') ? 'block' : 'none';
 };
 function getBadgeHtml(evt) { 
     let txt = "FPC/PE"; let cls = "badge-pe";
@@ -58,6 +63,7 @@ function getBadgeHtml(evt) {
     
     if(evt.status==='POSTPONED') { txt="ADIADO"; cls="badge-postponed"; } 
     if(evt.status==='CANCELLED') { txt="CANCELADO"; cls="badge-postponed"; } 
+    if(evt.type==='NON_OFFICIAL' && evt.status!=='POSTPONED' && evt.status!=='CANCELLED') return '';
     
     return `<div class="evt-badge ${cls}" ${evt.type==='NON_OFFICIAL' && evt.status==='OPEN' ? 'style="background:#1e293b; color:white; border-color:#475569;"' : ''}>${txt}</div>`;
 }
@@ -104,11 +110,19 @@ function compressImage(file, maxWidth, callback) {
     reader.onerror = () => callback(null);
 }
 
-function uploadImageToStorage(base64Data, path) { 
-    return fetch(base64Data).then(res => res.blob()).then(blob => { 
-        if(!storage) throw new Error("Storage não inicializado"); 
-        const storageRef = storage.ref(path); 
-        return storageRef.put(blob).then(snapshot => snapshot.ref.getDownloadURL()); 
+function uploadImageToStorage(base64Data, path) {
+    let task = null;
+    const upload = Promise.resolve().then(() => {
+        if (!storage) throw Object.assign(new Error('Storage não inicializado'), {code:'storage/not-initialized'});
+        if (!navigator.onLine) throw Object.assign(new Error('Sem conexão para enviar a foto'), {code:'storage/offline'});
+        task = storage.ref(path).putString(base64Data, 'data_url');
+        return task;
+    }).then(snapshot => snapshot.ref.getDownloadURL());
+    return awaitWithTimeout(upload, 30000, 'storage/timeout', 'Tempo de envio da foto esgotado').catch(error => {
+        if (error.code === 'storage/timeout' && task && typeof task.cancel === 'function') {
+            try { task.cancel(); } catch (_) {}
+        }
+        throw error;
     });
 }
 
@@ -562,6 +576,10 @@ function checkDbIntegrity() {
     if(!db.x1_duels || !Array.isArray(db.x1_duels)) db.x1_duels = db.x1_duels ? Object.values(db.x1_duels) : [];
     // PROTEÇÃO 2: Limpa novamente sempre que o Firebase enviar atualização
     db.users = db.users.filter(x => x !== null && x !== undefined);
+    db.users.forEach(user => {
+        if (user.inscricoes && !Array.isArray(user.inscricoes)) user.inscricoes = Object.values(user.inscricoes);
+        if (Array.isArray(user.inscricoes)) user.inscricoes = user.inscricoes.filter(Boolean);
+    });
     db.events = db.events.filter(x => x !== null && x !== undefined);
     db.tempos = db.tempos.filter(x => x !== null && x !== undefined);
     db.notifications = db.notifications.filter(x => x !== null && x !== undefined);
@@ -678,23 +696,114 @@ window.isCarteirinhaLiberada = function(user) {
 };
 
 let pendingSaves = new Set(); let saveTimeout = null;
-window.saveDB = function(moduleName = null) { 
-    if(DB_KEY.includes('archive')) return console.warn("Bloqueado: Tentativa de edição em arquivo histórico.");
-    try { localStorage.setItem(DB_KEY, JSON.stringify(db)); } catch (e) { console.warn("Aviso: Limite do LocalStorage atingido."); }
+function awaitWithTimeout(promise, milliseconds, code, message) {
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(Object.assign(new Error(message), {code})), milliseconds);
+        Promise.resolve(promise).then(value => {
+            clearTimeout(timer); resolve(value);
+        }, error => {
+            clearTimeout(timer); reject(error);
+        });
+    });
+}
+async function persistScoringModule(moduleName, records) {
+    if (DB_KEY.includes('archive')) throw Object.assign(new Error('Temporada histórica protegida'), {code:'save/archive'});
+    if (!['events', 'tempos'].includes(moduleName)) throw new Error('Módulo de gravação inválido');
+    if (!database || !auth || !auth.currentUser || !navigator.onLine) {
+        throw Object.assign(new Error('Entre online para gravar'), {code:'save/not-connected'});
+    }
+    const season = DB_KEY, uid = auth.currentUser.uid, target = season + '/' + moduleName;
+    const signature = JSON.stringify(records);
+    const writes = persistScoringModule.pendingWrites || (persistScoringModule.pendingWrites = new Map());
+    let pending = writes.get(target);
+    if (!pending) {
+        const connected = database.ref('.info/connected');
+        await new Promise((resolve, reject) => {
+            let finished = false;
+            const finish = error => {
+                if (finished) return;
+                finished = true;
+                clearTimeout(timer);
+                connected.off('value', onValue);
+                if (error) reject(error); else resolve();
+            };
+            const onValue = snapshot => { if (snapshot.val() === true) finish(); };
+            const timer = setTimeout(() => finish(Object.assign(new Error('Firebase sem conexão confirmada'), {code:'save/connection-timeout'})), 8000);
+            try { connected.on('value', onValue, error => finish(error)); }
+            catch (error) { finish(error); }
+        });
+        if (!auth.currentUser || auth.currentUser.uid !== uid || DB_KEY !== season || !navigator.onLine) {
+            throw Object.assign(new Error('A sessão ou a conexão mudou durante a gravação'), {code:'save/not-connected'});
+        }
+        pending = writes.get(target);
+        if (!pending) {
+            const payload = JSON.parse(signature);
+            pending = {signature, uid, timedOut:false, promise:Promise.resolve().then(() => database.ref(target).set(payload))};
+            writes.set(target, pending);
+            const current = pending;
+            const release = () => { if (writes.get(target) === current) writes.delete(target); };
+            pending.promise.then(() => {
+                release();
+                if (DB_KEY === season && auth.currentUser && auth.currentUser.uid === uid) {
+                    db[moduleName] = payload;
+                    try { localStorage.setItem(DB_KEY, JSON.stringify(db)); } catch (_) {}
+                    try { if (typeof refreshCurrentView === 'function') refreshCurrentView(); } catch (_) {}
+                    if (current.timedOut) toast('A GRAVAÇÃO ANTERIOR FOI CONFIRMADA. CONFIRA A LISTA ANTES DE SALVAR NOVAMENTE.');
+                }
+            }, release);
+        }
+    }
+    if (pending.uid !== uid || pending.signature !== signature) {
+        throw Object.assign(new Error('Existe uma gravação anterior aguardando confirmação'), {code:'save/pending'});
+    }
+    try {
+        await awaitWithTimeout(pending.promise, 20000, 'save/timeout', 'O servidor ainda não confirmou a gravação');
+    } catch (error) {
+        if (error.code === 'save/timeout') pending.timedOut = true;
+        throw error;
+    }
+}
+window.saveDB = function(moduleName = null) {
+    if(DB_KEY.includes('archive')) return console.warn('Bloqueado: Tentativa de edição em arquivo histórico.');
+    try { localStorage.setItem(DB_KEY, JSON.stringify(db)); } catch (e) { console.warn('Aviso: Limite do LocalStorage atingido.'); }
     if(!database) return;
-    if (moduleName) { if (Array.isArray(moduleName)) moduleName.forEach(m => pendingSaves.add(m)); else pendingSaves.add(moduleName);
-    } 
-    else { ['users', 'events', 'tempos', 'config', 'notifications', 'auditLog', 'x1_duels'].forEach(m => pendingSaves.add(m)); }
+    const modules = moduleName ? (Array.isArray(moduleName) ? moduleName : [moduleName]) : ['users', 'events', 'tempos', 'config', 'notifications', 'auditLog', 'x1_duels'];
+    modules.forEach(name => pendingSaves.add(name));
     if(saveTimeout) clearTimeout(saveTimeout);
-    saveTimeout = setTimeout(() => { let updates = {}; pendingSaves.forEach(m => { if(db[m] !== undefined) updates['/' + DB_KEY + '/' + m] = db[m]; });
-        if(Object.keys(updates).length > 0) database.ref().update(updates).catch(err => { console.error("Erro Firebase"); });
-        pendingSaves.clear(); }, 250);
+    saveTimeout = setTimeout(() => {
+        const modulesToSave = [...pendingSaves];
+        pendingSaves.clear();
+        const otherUpdates = {};
+        modulesToSave.forEach(name => {
+            if (db[name] === undefined) return;
+            if (name === 'events' || name === 'tempos') {
+                persistScoringModule(name, db[name]).catch(error => {
+                    console.warn('[SAVE] Gravação de ' + name + ' falhou:', error.code || error.message);
+                    const uncertain = error.code === 'save/timeout' || error.code === 'save/pending';
+                    toast(uncertain ? 'A GRAVAÇÃO AINDA NÃO FOI CONFIRMADA E PODE CONCLUIR QUANDO A CONEXÃO VOLTAR.' : 'NÃO FOI POSSÍVEL GRAVAR ' + (name === 'events' ? 'OS EVENTOS' : 'OS TEMPOS') + ' NO SERVIDOR.', 'error');
+                });
+            } else {
+                otherUpdates['/' + DB_KEY + '/' + name] = db[name];
+            }
+        });
+        if (Object.keys(otherUpdates).length) {
+            database.ref().update(otherUpdates).catch(error => console.warn('[SAVE] Dados auxiliares não foram gravados:', error.code || error.message));
+        }
+    }, 250);
 };
 
-if(database) {
-    database.ref(DB_KEY).on('value', (snapshot) => {
+let activeDatabaseRef = null;
+function startDatabaseSync() {
+    if (!database) return;
+    if (activeDatabaseRef) activeDatabaseRef.off('value');
+    activeDatabaseRef = database.ref(DB_KEY);
+    activeDatabaseRef.on('value', (snapshot) => {
         const data = snapshot.val();
         if(data) {
+            const writes = persistScoringModule.pendingWrites;
+            for (const moduleName of ['events', 'tempos']) {
+                if (writes && writes.has(DB_KEY + '/' + moduleName)) data[moduleName] = db[moduleName];
+            }
             if(data.tempos && !Array.isArray(data.tempos)) data.tempos = Object.values(data.tempos);
             if(data.users && !Array.isArray(data.users)) data.users = Object.values(data.users);
             if(data.events && !Array.isArray(data.events)) data.events = Object.values(data.events);
@@ -705,8 +814,9 @@ if(database) {
             refreshCurrentView(); atualizarBadgeNotificacoes();
             if (window.liveTimingWindow && !window.liveTimingWindow.closed) { if (typeof gatherAndPushData === 'function') gatherAndPushData(window.liveTimingWindow); }
         }
-    });
+    }, error => console.warn('[DB] Sincronização indisponível:', error.code || 'erro de leitura'));
 }
+if (database) startDatabaseSync();
 
 function updateSessionStorage() { if(localStorage.getItem(SESS_KEY)) localStorage.setItem(SESS_KEY, JSON.stringify(loggedUser));
 else sessionStorage.setItem(SESS_KEY, JSON.stringify(loggedUser)); }
@@ -1582,7 +1692,7 @@ if (btnAdm) {
             setTimeout(() => {
 
                 showConfirm(
-                    "🔔 ATIVE AS NOTIFICAÇÕES DO DH-PE",
+                    "🔔 ATIVE AS NOTIFICAÇÕES DO DH-ND",
                     `
                         <b>Não perca informações importantes da prova!</b>
                         <br><br>
@@ -1615,12 +1725,12 @@ if (btnAdm) {
                             showConfirm(
                                 "🔕 NOTIFICAÇÕES BLOQUEADAS",
                                 `
-                                    O seu celular bloqueou as notificações do DH-PE.
+                                    O seu celular bloqueou as notificações do DH-ND.
                                     <br><br>
                                     Para receber <b>ordem de largada, resultados e avisos da prova</b>,
                                     libere a permissão nas configurações do navegador ou do aparelho.
                                     <br><br>
-                                    Depois volte ao DH-PE e toque novamente no sino.
+                                    Depois volte ao DH-ND e toque novamente no sino.
                                 `,
                                 '<i class="fas fa-bell-slash" style="color:#d50000; font-size:35px;"></i>',
                                 function() {}
@@ -1640,7 +1750,7 @@ if (btnAdm) {
                 showConfirm(
                     "🔕 ATIVE AS NOTIFICAÇÕES",
                     `
-                        As notificações do DH-PE estão <b>BLOQUEADAS neste aparelho.</b>
+                        As notificações do DH-ND estão <b>BLOQUEADAS neste aparelho.</b>
                         <br><br>
                         Você pode deixar de receber:
                         <br><br>
@@ -1651,7 +1761,7 @@ if (btnAdm) {
                         <br><br>
                         <b>Libere as notificações nas configurações do navegador/aparelho.</b>
                         <br><br>
-                        Depois volte ao DH-PE e toque no sino.
+                        Depois volte ao DH-ND e toque no sino.
                     `,
                     '<i class="fas fa-bell-slash" style="color:#d50000; font-size:35px;"></i>',
                     function() {
@@ -1716,9 +1826,45 @@ btn.innerHTML = '<i class="fas fa-lock"></i> BLOQUEADO'; btn.style.background = 
 // ==========================================================
 // 9. EVENTOS, INSCRIÇÕES E LISTAS DE CONTEÚDO (HOME)
 // ==========================================================
+function registrationCategoryName(value) {
+    return window.normalizeCatName(value).replace(/\s*\((?:EXTRA|OFICIAL)\)\s*$/i, '').trim();
+}
+
+function hasAuthenticatedRegistrationSession() {
+    if (!loggedUser || !auth || !auth.currentUser) return false;
+    const current = auth.currentUser;
+    return String(current.email || '').toLowerCase() === cleanCPF(loggedUser.cpf) + '@dhpe.com.br' &&
+        (!loggedUser.uid || loggedUser.uid === current.uid);
+}
+
+function nonOfficialRegistrationCategories(evt) {
+    if (!evt || evt.type !== 'NON_OFFICIAL') return [];
+    const categories = new Map();
+    const generalPrice = evt.val != null && String(evt.val).trim() !== '' ? String(evt.val) : '0,00';
+    for (const category of db.config?.categories || []) {
+        if (!category || category.active !== true || !String(category.name || '').trim()) continue;
+        const name = registrationCategoryName(category.name);
+        categories.set(name, {name, price: generalPrice});
+    }
+    for (const [rawName, rawPrice] of Object.entries(evt.extraVals || {})) {
+        if (!String(rawName).trim()) continue;
+        const name = registrationCategoryName(rawName);
+        const price = rawPrice != null && String(rawPrice).trim() !== '' ? String(rawPrice) : generalPrice;
+        categories.set(name, {name, price});
+    }
+    return [...categories.values()];
+}
+
+function escapeRegistrationOption(value) {
+    return String(value).replace(/[&<>"']/g, character => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[character]));
+}
+
 window.iniciarInscricao = function(evtId, mode = 'MAIN') {
     if(!loggedUser) return toast("FAÇA LOGIN PARA INSCREVER-SE", "error");
     const evt = db.events.find(e => e.id == evtId); if(!evt) return toast("EVENTO NÃO ENCONTRADO", "error"); if(!loggedUser.inscricoes) loggedUser.inscricoes = [];
+    if (evt.type === 'NON_OFFICIAL' && !hasAuthenticatedRegistrationSession()) {
+        return toast('FAÇA LOGIN NOVAMENTE PARA INSCREVER-SE', 'error');
+    }
         // Bloqueia novas inscrições após a data/hora programada.
     if (inscricoesEstaoEncerradas(evt)) {
 
@@ -1727,7 +1873,21 @@ window.iniciarInscricao = function(evtId, mode = 'MAIN') {
             "error"
         );
     }
-    const minhasInscricoes = loggedUser.inscricoes.filter(i => String(i.id) === String(evtId)); if (minhasInscricoes.length >= 3) return toast("MÁXIMO DE 3 INSCRIÇÕES ATINGIDO!", "error");
+    const minhasInscricoes = loggedUser.inscricoes.filter(i => String(i.id) === String(evtId));
+    if (evt.type === 'NON_OFFICIAL' && mode !== 'EXTRA') {
+        const existing = mode === 'MAIN' ? minhasInscricoes.find(item => !item.extraCat) :
+            minhasInscricoes.find(item => registrationCategoryName(item.extraCat || loggedUser.cat) === registrationCategoryName(mode));
+        if (existing) {
+            currentInscricaoPendente = null;
+            abrirModalPagamento(evt, existing);
+            return;
+        }
+        if (mode === 'MAIN') mode = 'EXTRA';
+        else if (!nonOfficialRegistrationCategories(evt).some(category => category.name === registrationCategoryName(mode))) {
+            return toast('CATEGORIA NÃO DISPONÍVEL NESTE EVENTO', 'error');
+        }
+    }
+    if (minhasInscricoes.length >= 3) return toast("MÁXIMO DE 3 INSCRIÇÕES ATINGIDO!", "error");
     
     if(mode === 'EXTRA') { 
         tempEvtIdExtra = evtId; 
@@ -1737,15 +1897,13 @@ window.iniciarInscricao = function(evtId, mode = 'MAIN') {
         // Mapeia as categorias já inscritas para OMITIR na lista de opções
         const categoriasJaInscritas = minhasInscricoes.map(i => {
             let nomeCat = i.extraCat ? i.extraCat : loggedUser.cat;
-            return window.normalizeCatName(nomeCat).replace(" (EXTRA)", "");
+            return registrationCategoryName(nomeCat);
         });
         
-        if (evt.type === 'NON_OFFICIAL' && evt.extraVals) {
-             Object.keys(evt.extraVals).forEach(cName => {
-                 let cleanName = cName.replace(" (EXTRA)", "");
-                 // Só adiciona a opção se NÃO estiver na lista das que ele já se inscreveu
-                 if(!categoriasJaInscritas.includes(cleanName)) {
-                     catsOptionsHtml += `<option value="${cName}">${cleanName} - R$ ${evt.extraVals[cName]}</option>`;
+        if (evt.type === 'NON_OFFICIAL') {
+             nonOfficialRegistrationCategories(evt).forEach(category => {
+                 if(!categoriasJaInscritas.includes(category.name)) {
+                     catsOptionsHtml += `<option value="${escapeRegistrationOption(category.name)}">${escapeRegistrationOption(category.name)} - R$ ${escapeRegistrationOption(category.price)}</option>`;
                  }
              });
         } else {
@@ -1765,6 +1923,12 @@ window.iniciarInscricao = function(evtId, mode = 'MAIN') {
         }
         
         selectExtra.innerHTML = catsOptionsHtml;
+        const categoryHelp = document.getElementById('extra-sub-help');
+        const categoryLabel = document.getElementById('extra-sub-label');
+        if (categoryHelp) categoryHelp.textContent = evt.type === 'NON_OFFICIAL'
+            ? 'Escolha qualquer categoria disponível neste evento. A carteirinha bloqueada e a categoria do perfil não impedem esta inscrição.'
+            : 'Escolha uma categoria permitida para sua inscrição (Não Oficial):';
+        if (categoryLabel) categoryLabel.textContent = evt.type === 'NON_OFFICIAL' ? 'CATEGORIA DO EVENTO' : 'CATEGORIA EXTRA';
         const listDiv = document.getElementById('extra-existing-list'); 
         const container = document.getElementById('extra-existing-subs'); 
         
@@ -1788,7 +1952,7 @@ window.iniciarInscricao = function(evtId, mode = 'MAIN') {
         return;
     }
     
-    if (mode === 'MAIN') { 
+    if (mode === 'MAIN' && evt.type !== 'NON_OFFICIAL') { 
         const freshUser = db.users.find(u => u.cpf === loggedUser.cpf);
         const liberacaoGlobal =
     window.isCarteirinhaGlobalLiberada();
@@ -1806,7 +1970,7 @@ const liberacaoUsuario =
     
     let inscExistente = mode === 'MAIN' ? minhasInscricoes.find(i => !i.extraCat) : minhasInscricoes.find(i => window.normalizeCatName(i.extraCat) === window.normalizeCatName(mode)); 
     if (inscExistente) { abrirModalPagamento(evt, inscExistente); return; }
-    currentInscricaoPendente = { id: evtId, status: 'PENDENTE', date: new Date().toISOString(), extraCat: mode === 'MAIN' ? null : mode }; 
+    currentInscricaoPendente = { id: evtId, status: 'PENDENTE', date: new Date().toISOString(), extraCat: mode === 'MAIN' ? null : (evt.type === 'NON_OFFICIAL' ? window.normalizeCatName(mode) : mode) }; 
     abrirModalPagamento(evt, currentInscricaoPendente);
 };
 
@@ -1830,10 +1994,29 @@ window.redirectFromLockToExtra = function() {
 };
 
 
-window.confirmarInscricaoExtra = function() { const catEscolhida = document.getElementById('extra-sub-cat').value;
-if(!catEscolhida) return toast("SELECIONE A CATEGORIA!", "error"); const jaTem = loggedUser.inscricoes.some(i => String(i.id) === String(tempEvtIdExtra) && window.normalizeCatName(i.extraCat) === window.normalizeCatName(catEscolhida));
-if(jaTem) return toast("VOCÊ JÁ ESTÁ NESSA CATEGORIA!", "error"); currentInscricaoPendente = { id: tempEvtIdExtra, status: 'PENDENTE', date: new Date().toISOString(), extraCat: window.normalizeCatName(catEscolhida) };
-fecharModal('modal-extra-sub'); const evt = db.events.find(e => e.id == tempEvtIdExtra); abrirModalPagamento(evt, currentInscricaoPendente); };
+window.confirmarInscricaoExtra = function() {
+    if (!loggedUser) return toast('FAÇA LOGIN PARA INSCREVER-SE', 'error');
+    const evt = db.events.find(event => String(event.id) === String(tempEvtIdExtra));
+    if (!evt) return toast('EVENTO NÃO ENCONTRADO', 'error');
+    if (evt.type === 'NON_OFFICIAL' && !hasAuthenticatedRegistrationSession()) {
+        return toast('FAÇA LOGIN NOVAMENTE PARA INSCREVER-SE', 'error');
+    }
+    if (inscricoesEstaoEncerradas(evt)) return toast('INSCRIÇÕES ENCERRADAS PARA ESTE EVENTO', 'error');
+    const catEscolhida = document.getElementById('extra-sub-cat').value;
+    if (!catEscolhida) return toast('SELECIONE A CATEGORIA!', 'error');
+    const name = registrationCategoryName(catEscolhida);
+    if (evt.type === 'NON_OFFICIAL' && !nonOfficialRegistrationCategories(evt).some(category => category.name === name)) {
+        return toast('CATEGORIA NÃO DISPONÍVEL NESTE EVENTO', 'error');
+    }
+    const subscriptions = (loggedUser.inscricoes || []).filter(item => String(item.id) === String(tempEvtIdExtra));
+    if (subscriptions.some(item => registrationCategoryName(item.extraCat || loggedUser.cat) === name)) {
+        return toast('VOCÊ JÁ ESTÁ NESSA CATEGORIA!', 'error');
+    }
+    if (subscriptions.length >= 3) return toast('MÁXIMO DE 3 INSCRIÇÕES ATINGIDO!', 'error');
+    currentInscricaoPendente = { id: tempEvtIdExtra, status: 'PENDENTE', date: new Date().toISOString(), extraCat: window.normalizeCatName(catEscolhida) };
+    fecharModal('modal-extra-sub');
+    abrirModalPagamento(evt, currentInscricaoPendente);
+};
 window.abrirModalPagamento = function(evt, inscPendente) { 
     currentPayId = {id: parseInt(evt.id), name: evt.t}; 
     let finalPrice = evt.val ||
@@ -1842,13 +2025,8 @@ window.abrirModalPagamento = function(evt, inscPendente) {
     if (evt.type === 'NON_OFFICIAL') {
         const catNormalized = inscPendente && inscPendente.extraCat ?
         window.normalizeCatName(inscPendente.extraCat) : window.normalizeCatName(loggedUser.cat);
-        const cleanCat = catNormalized.replace(" (EXTRA)", ""); 
-        
-        if (evt.extraVals && evt.extraVals[catNormalized] && evt.extraVals[catNormalized].trim() !== "") { 
-            finalPrice = evt.extraVals[catNormalized];
-        } else if (evt.extraVals && evt.extraVals[cleanCat] && evt.extraVals[cleanCat].trim() !== "") {
-            finalPrice = evt.extraVals[cleanCat];
-        }
+        const chosenCategory = nonOfficialRegistrationCategories(evt).find(category => category.name === registrationCategoryName(catNormalized));
+        if (chosenCategory) finalPrice = chosenCategory.price;
     } else {
         if (inscPendente && inscPendente.extraCat && evt.extraVals) { 
             const catNormalized = window.normalizeCatName(inscPendente.extraCat);
@@ -1925,10 +2103,10 @@ window.enviarComprovanteWhatsApp = function(){
 window.verDetalhesEvento = function(id) { 
     const e = db.events.find(x => String(x.id) === String(id)); if(!e) return;
     document.getElementById('det-evt-title').innerText = e.t; document.getElementById('det-evt-info').innerText = `${e.d} | ${e.city}`; document.getElementById('det-evt-img').src = e.img || ""; const ptsDiv = document.getElementById('det-evt-points');
-    if(ptsDiv) { let html = ""; if(e.points) { html += `<div style="grid-column:span 5; font-size:10px; font-weight:bold; margin-bottom:5px; color:#15803d; border-bottom:1px solid #ddd;">PONTUAÇÃO CORRIDA</div>`;
+    if(ptsDiv) { let html = ""; if(!window.DHNDScoring.isScoringEvent(e)) { html = '<div style="grid-column:span 5; padding:10px; color:#64748b; font-size:12px;">Este evento não soma pontos no ranking.</div>'; } else { if(e.points) { html += `<div style="grid-column:span 5; font-size:10px; font-weight:bold; margin-bottom:5px; color:#15803d; border-bottom:1px solid #ddd;">PONTUAÇÃO CORRIDA</div>`;
     html += e.points.map((p, i) => `<div style="background:#f0fdf4; padding:5px; text-align:center; font-size:10px; border-radius:4px; border:1px solid #bbf7d0;"><b>${i+1}º</b><br>${p}</div>`).join('');
     } if(e.hasQualify && e.qPoints) { html += `<div style="grid-column:span 5; font-size:10px; font-weight:bold; margin-top:10px; margin-bottom:5px; color:#d65a00; border-bottom:1px solid #ddd;">PONTUAÇÃO QUALIFY</div>`;
-    html += e.qPoints.map((p, i) => `<div style="background:#fff7ed; padding:5px; text-align:center; font-size:10px; border-radius:4px; border:1px solid #fed7aa;"><b>${i+1}º</b><br>${p}</div>`).join(''); } ptsDiv.innerHTML = html;
+    html += e.qPoints.map((p, i) => `<div style="background:#fff7ed; padding:5px; text-align:center; font-size:10px; border-radius:4px; border:1px solid #fed7aa;"><b>${i+1}º</b><br>${p}</div>`).join(''); } } ptsDiv.innerHTML = html;
     } const galDiv = document.getElementById('det-evt-gallery-area'); const galScroll = document.getElementById('det-evt-gallery-scroll'); if(galDiv && galScroll) { if(e.gallery && e.gallery.length > 0) { galDiv.style.display = 'block';
     currentGalleryList = e.gallery; galScroll.innerHTML = e.gallery.map((img, idx) => `<img src="${img}" class="gallery-scroll-item" onclick="openGalleryViewer(${idx})">`).join(''); } else { galDiv.style.display = 'none';
     } } openModal('modal-event-details'); 
@@ -3304,7 +3482,7 @@ window.populatePublicFilters = function(tab) {
         let evtHtml = tab === 'ranking' ? '<option value="ALL">GERAL (SOMA)</option>' : '<option value="ALL">TODAS AS ETAPAS</option>';
         if (db.events && db.events.length > 0) {
             db.events.forEach(e => {
-                if (e.status !== 'CANCELLED') evtHtml += `<option value="${e.id}">${e.t}</option>`;
+                if (e.status !== 'CANCELLED' && (tab !== 'ranking' || window.DHNDScoring.isScoringEvent(e))) evtHtml += `<option value="${e.id}">${e.t}</option>`;
             });
         }
         selEvt.innerHTML = evtHtml;
@@ -3420,7 +3598,7 @@ const subs =
         : [];
            
             const count = subs.length; const btnBaseStyle = "margin:0; width:100%; padding:10px 4px; font-weight:900; font-size:11px; white-space:normal; line-height:1.2; display:flex; align-items:center; justify-content:center; text-align:center;";
-            let extraBtnHtml = (count < 3) ? `<button class="btn" style="${btnBaseStyle} background:var(--pe-yellow); color:black; border:1px solid #e6c200" onclick="window.iniciarInscricao(${e.id}, 'EXTRA')">INSCRIÇÕES NÃO OFICIAIS (+)</button>` : '';
+            let extraBtnHtml = (e.type !== 'NON_OFFICIAL' && count < 3) ? `<button class="btn" style="${btnBaseStyle} background:var(--pe-yellow); color:black; border:1px solid #e6c200" onclick="window.iniciarInscricao(${e.id}, 'EXTRA')">INSCRIÇÕES NÃO OFICIAIS (+)</button>` : '';
             let viewBtnHtml = `<button class="btn" style="${btnBaseStyle} background:#1e293b;" onclick="window.verDetalhesEvento(${e.id})">VER DETALHES</button>`; 
             let mainBtnHtml = '';
             if (e.type === 'NON_OFFICIAL') {
@@ -4655,7 +4833,7 @@ if (fEvt === 'ALL') {
 
                  const evtObjH = db.events.find(e => String(e.id) === String(fEvt)); 
                  const evtNameHeader = fEvt === 'ALL' ? 'GERAL DA TEMPORADA (SOMA DAS ETAPAS)' : (evtObjH ? evtObjH.t : 'ETAPA'); 
-                 const regionNameHeader = fRegion === 'PE' ? 'RANKING PERNAMBUCO' : 'RANKING NORDESTE (OPEN)';
+                 const regionNameHeader = fRegion === 'PE' ? 'RANKING PERNAMBUCO' : 'RANKING NORDESTE';
                  const catNameHeader = fCat === 'ALL' ? 'SOMA DE TODAS AS CATEGORIAS' : fCat;
 
                  const headerTag = `<div class="print-header" style="background: linear-gradient(135deg, #d50000, #990000); color: white; padding: 15px; border-radius: 8px; margin-bottom: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center;"><h2 style="margin: 0; font-size: 18px; font-weight: 900; text-transform: uppercase;">RANKING POR CIDADES</h2><div style="font-size: 11px; margin-top: 5px; opacity: 0.9; font-weight: bold;"><i class="fas fa-map-marker-alt"></i> ${regionNameHeader} &nbsp;|&nbsp; <i class="fas fa-bicycle"></i> ${catNameHeader}</div><div style="font-size: 12px; margin-top: 5px; color: #ffe500; font-weight: bold;">${evtNameHeader}</div></div>`;
@@ -4740,7 +4918,7 @@ if (fEvt === 'ALL') {
              if (fEvt === 'ALL') {
                  // Soma todos os pontos das etapas que ainda não acabaram
                  db.events.forEach(e => {
-                     if (e.status === 'OPEN' || e.status === 'POSTPONED') {
+                     if (window.DHNDScoring.isScoringEvent(e) && (e.status === 'OPEN' || e.status === 'POSTPONED')) {
                          let p1 = (e.points && e.points.length > 0) ? parseInt(e.points[0], 10) || 0 : 0;
                          let q1 = (e.hasQualify && e.qPoints && e.qPoints.length > 0) ? parseInt(e.qPoints[0], 10) || 0 : 0;
                          maxRemainingPts += (p1 + q1);
@@ -4778,8 +4956,8 @@ if (fEvt === 'ALL') {
              // ----------------------------------------------------------
 
              const evtObjH = db.events.find(e => String(e.id) === String(fEvt)); const evtNameHeader = fEvt === 'ALL' ? 'GERAL DA TEMPORADA (SOMA DAS ETAPAS)' : (evtObjH ? evtObjH.t : 'ETAPA'); const catNameHeader = fCat === 'ALL' ? 'MELHORES DA PISTA' : (fCat === 'ALL_SEP' ? 'GERAL SEPARADA (POR CATEGORIA)' : fCat);
-             const regionNameHeader = fRegion === 'PE' ? 'RANKING PERNAMBUCO' : 'RANKING NORDESTE (OPEN)';
-             const headerTag = `<div class="print-header" style="background: linear-gradient(135deg, #d50000, #990000); color: white; padding: 15px; border-radius: 8px; margin-bottom: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center;"><h2 style="margin: 0; font-size: 18px; font-weight: 900; text-transform: uppercase;">RANKING OFICIAL</h2><div style="font-size: 11px; margin-top: 5px; opacity: 0.9; font-weight: bold;"><i class="fas fa-map-marker-alt"></i> ${regionNameHeader} &nbsp;|&nbsp; <i class="fas fa-bicycle"></i> ${catNameHeader}</div><div style="font-size: 12px; margin-top: 5px; color: #ffe500; font-weight: bold;">${evtNameHeader}</div></div>`;
+             const regionNameHeader = fRegion === 'PE' ? 'RANKING PERNAMBUCO' : 'RANKING NORDESTE';
+             const headerTag = `<div class="print-header" style="background: linear-gradient(135deg, #d50000, #990000); color: white; padding: 15px; border-radius: 8px; margin-bottom: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center;"><h2 style="margin: 0; font-size: 18px; font-weight: 900; text-transform: uppercase;">RANKING</h2><div style="font-size: 11px; margin-top: 5px; opacity: 0.9; font-weight: bold;"><i class="fas fa-map-marker-alt"></i> ${regionNameHeader} &nbsp;|&nbsp; <i class="fas fa-bicycle"></i> ${catNameHeader}</div><div style="font-size: 12px; margin-top: 5px; color: #ffe500; font-weight: bold;">${evtNameHeader}</div></div>`;
              
              if(filteredList.length === 0) div.innerHTML = headerTag + '<div style="padding:20px; text-align:center; color:#999; font-size:11px">Nenhum ponto registrado.</div>';
              else {
@@ -5353,8 +5531,15 @@ db.config.allowAllIDs =
 // ==========================================================
 // 11. GERENCIAMENTO DE EVENTOS (CRIAR/EDITAR/EXCLUIR)
 // ==========================================================
-function renderPointsInputs(pts, containerId = 'evt-points-grid', prefix = 'pt-') { const grid = document.getElementById(containerId);
-if(!grid) return; grid.innerHTML = pts.map((p, i) => { const saved = localStorage.getItem(`autosave_${prefix}${i}`); const val = saved !== null ? saved : p; return `<input type="number" id="${prefix}${i}" value="${val}" class="input-field" style="text-align:center" placeholder="${i+1}º" oninput="localStorage.setItem('autosave_${prefix}${i}', this.value)">`; }).join('');
+function renderPointsInputs(pts, containerId = 'evt-points-grid', prefix = 'pt-', restoreDraft = true) {
+    const grid = document.getElementById(containerId);
+    if(!grid) return;
+    const values = Array.from({length:20}, (_, i) => pts && pts[i] !== undefined ? pts[i] : '');
+    grid.innerHTML = values.map((point, i) => {
+        const saved = restoreDraft ? localStorage.getItem('autosave_' + prefix + i) : null;
+        const val = saved !== null ? saved : point;
+        return '<input type="number" min="0" step="1" id="' + prefix + i + '" value="' + val + '" class="input-field" style="text-align:center" placeholder="' + (i+1) + 'º" oninput="localStorage.setItem(\'autosave_' + prefix + i + '\', this.value)">';
+    }).join('');
 }
 window.copiarPontosDe = function() {
     const select = document.getElementById('adm-evt-copy-source');
@@ -5406,92 +5591,15 @@ window.copiarPontosDe = function() {
     renderPointsInputs(
         pontosOficiais,
         'evt-points-grid',
-        'pt-'
+        'pt-',
+        false
     );
 
     renderPointsInputs(
         pontosQualify,
         'evt-q-points-grid',
-        'q-pt-'
-    );
-
-    // Atualiza o autosave
-    for (let i = 0; i < 20; i++) {
-        localStorage.setItem(
-            'autosave_pt-' + i,
-            pontosOficiais[i] !== "" ? pontosOficiais[i] : ""
-        );
-
-        localStorage.setItem(
-            'autosave_q-pt-' + i,
-            pontosQualify[i] !== "" ? pontosQualify[i] : ""
-        );
-    }
-
-    toast(
-        "PONTUAÇÃO COPIADA DE " + eventoOrigem.t,
-        "success"
-    );
-};
-
-
-window.copiarPontosDe = function() {
-    const select = document.getElementById('adm-evt-copy-source');
-
-    if (!select || !select.value) {
-        return toast(
-            "SELECIONE O EVENTO DE ONDE DESEJA COPIAR A PONTUAÇÃO",
-            "error"
-        );
-    }
-
-    const eventoOrigem = db.events.find(
-        e => String(e.id) === String(select.value)
-    );
-
-    if (!eventoOrigem) {
-        return toast("EVENTO DE ORIGEM NÃO ENCONTRADO", "error");
-    }
-
-    const pontosOficiais = Array.from(
-        { length: 20 },
-        (_, i) => {
-            if (
-                eventoOrigem.points &&
-                eventoOrigem.points[i] !== undefined
-            ) {
-                return eventoOrigem.points[i];
-            }
-
-            return "";
-        }
-    );
-
-    const pontosQualify = Array.from(
-        { length: 20 },
-        (_, i) => {
-            if (
-                eventoOrigem.qPoints &&
-                eventoOrigem.qPoints[i] !== undefined
-            ) {
-                return eventoOrigem.qPoints[i];
-            }
-
-            return "";
-        }
-    );
-
-    // Atualiza os campos visuais
-    renderPointsInputs(
-        pontosOficiais,
-        'evt-points-grid',
-        'pt-'
-    );
-
-    renderPointsInputs(
-        pontosQualify,
-        'evt-q-points-grid',
-        'q-pt-'
+        'q-pt-',
+        false
     );
 
     // Atualiza o autosave
@@ -5535,6 +5643,9 @@ window.toggleQualifyInputs = function() {
 };
 function clearEventForm() { 
     document.querySelectorAll('#adm-sec-events input').forEach(i => { if(i.type !== 'checkbox') { i.value = ''; localStorage.removeItem('autosave_' + i.id); } else { i.checked = false; localStorage.removeItem('autosave_' + i.id); } });
+    const scoringChoice = document.getElementById('adm-evt-points-enabled');
+    if (scoringChoice) scoringChoice.value = 'false';
+    localStorage.removeItem('autosave_adm-evt-points-enabled');
     const galArea = document.getElementById('adm-gallery-preview-area');
     if(galArea) galArea.innerHTML = ''; 
     const btnSave = document.getElementById('btn-save-event');
@@ -5553,7 +5664,10 @@ window.deleteGalleryImage = function(evtId, imgIndex) { if(!isSuperAdmin(loggedU
 
 window.addEvent = function() { 
     if(!isSuperAdmin(loggedUser)) return toast("Apenas Super Admin pode criar/editar eventos", "error");
-    const btn = document.getElementById('btn-save-event'); const isEdit = !!document.getElementById('adm-evt-id-edit').value; const originalText = isEdit ? "ATUALIZAR EVENTO" : "SALVAR EVENTO";
+    const btn = document.getElementById('btn-save-event'); if(btn.disabled) return;
+    const draftId = document.getElementById('adm-evt-id-edit').value;
+    const isEdit = !!draftId && db.events.some(event => String(event.id) === String(draftId));
+    const originalText = isEdit ? "ATUALIZAR EVENTO" : "SALVAR EVENTO";
     btn.innerText = isEdit ? "ATUALIZANDO..." : "SALVANDO...";
     const getVal = (id) => document.getElementById(id) ? document.getElementById(id).value : "";
     const t = getVal('adm-evt-t').toUpperCase(); 
@@ -5586,18 +5700,28 @@ window.addEvent = function() {
     } else {
         geralVal = getVal('adm-evt-v');
         extraVals = { 'ESTREANTE (EXTRA)': getVal('adm-evt-v-estreante'), 'OPEN (EXTRA)': getVal('adm-evt-v-open'), 'RÍGIDA (EXTRA)': getVal('adm-evt-v-rigida'), 'E-BIKE (EXTRA)': getVal('adm-evt-v-ebike'), 'PCD (EXTRA)': getVal('adm-evt-v-pcd') };
-        hasQualify = document.getElementById('adm-evt-has-qualify').checked;
-        for(let i=0; i<20; i++) { const el = document.getElementById(`pt-${i}`);
-        newPoints.push(el && el.value !== "" ? parseInt(el.value, 10) : ""); } 
-        for(let i=0; i<20; i++) { const el = document.getElementById(`q-pt-${i}`);
-        newQPoints.push(el && el.value !== "" ? parseInt(el.value, 10) : ""); } 
+    }
+    const pointsEnabled = evtType !== 'NON_OFFICIAL' || getVal('adm-evt-points-enabled') === 'true';
+    hasQualify = document.getElementById('adm-evt-has-qualify').checked;
+    for(let i=0; i<20; i++) {
+        const race = getVal('pt-' + i), qualify = getVal('q-pt-' + i);
+        newPoints.push(race !== '' ? Number(race) : '');
+        newQPoints.push(qualify !== '' ? Number(qualify) : '');
+    }
+    if ([...newPoints, ...newQPoints].some(point => point !== '' && (!Number.isInteger(point) || point < 0))) {
+        btn.innerText = originalText;
+        return toast('USE PONTOS INTEIROS, COM ZERO OU MAIS.', 'error');
+    }
+    if (evtType === 'NON_OFFICIAL' && pointsEnabled && !window.DHNDScoring.hasConfiguredPoints({points:newPoints, qPoints:newQPoints, hasQualify})) {
+        btn.innerText = originalText;
+        return toast('COPIE UMA TABELA OU INFORME A PONTUAÇÃO DESTE EVENTO.', 'error');
     }
 
     const evtObj = { 
         id: getVal('adm-evt-id-edit') ? parseInt(getVal('adm-evt-id-edit'), 10) : Date.now(), 
         t: t, d: d, m: getVal('adm-evt-month'), type: evtType, city: getVal('adm-evt-c').toUpperCase(), 
         val: geralVal, pix: getVal('adm-evt-pix'), status: getVal('adm-evt-status') || 'OPEN', 
-        points: newPoints, qPoints: newQPoints, closeDate: getVal('adm-evt-close-date'), 
+        points: newPoints, qPoints: newQPoints, pointsEnabled: pointsEnabled, closeDate: getVal('adm-evt-close-date'), 
         startListDate: getVal('adm-evt-startlist-date'), open: true, img: null, gallery: [], 
         wpp: document.getElementById('adm-evt-wpp').value, 
         hasQualify: hasQualify, qDate: hasQualify ? document.getElementById('adm-evt-q-date').value : null, 
@@ -5620,7 +5744,7 @@ window.addEvent = function() {
 
         if (db.events[oldIdx].gallery) {
             evtObj.gallery =
-                db.events[oldIdx].gallery;
+                db.events[oldIdx].gallery.slice();
         }
 
         // Mantém a publicação da ordem ao editar o evento
@@ -5646,20 +5770,85 @@ window.addEvent = function() {
     evtObj.startListPublishedAt = null;
 } 
     
+    if (!database || !auth || !auth.currentUser || !navigator.onLine) {
+        btn.innerText = originalText;
+        return toast('ENTRE ONLINE PARA SALVAR. OS CAMPOS E A FOTO SELECIONADA FORAM MANTIDOS.', 'error');
+    }
+    if (persistScoringModule.pendingWrites && persistScoringModule.pendingWrites.has(DB_KEY + '/events')) {
+        btn.innerText = originalText;
+        return toast('A GRAVAÇÃO ANTERIOR AINDA AGUARDA CONFIRMAÇÃO. NENHUMA NOVA CÓPIA DO EVENTO FOI ENVIADA.', 'error');
+    }
+    // Reuse this ID after an uncertain acknowledgement instead of creating another event.
+    document.getElementById('adm-evt-id-edit').value = String(evtObj.id);
+    try { localStorage.setItem('autosave_adm-evt-id-edit', String(evtObj.id)); } catch (_) {}
+    if (evtObj.startListPublished === undefined) {
+        evtObj.startListPublished = false;
+        evtObj.startListPublishedAt = null;
+    }
+    btn.disabled = true;
     const fileInput = document.getElementById('adm-evt-img');
     const galleryInput = document.getElementById('adm-evt-gallery'); 
-    const p1 = new Promise((resolve) => { if(fileInput && fileInput.files && fileInput.files[0]) { compressImage(fileInput.files[0], 800, (base64) => { if(base64) { uploadImageToStorage(base64, `capa_${evtObj.id}.jpg`).then(url => { evtObj.img = url; resolve(); }).catch(() => resolve()); } else resolve(); }); } else resolve(); });
-    const p2 = new Promise((resolve) => { if(galleryInput && galleryInput.files && galleryInput.files.length > 0) { let loaded = 0; if(!evtObj.gallery) evtObj.gallery = []; for(let i=0; i<galleryInput.files.length; i++) { compressImage(galleryInput.files[i], 800, (base64) => { if(base64) { uploadImageToStorage(base64, `galeria_${evtObj.id}_${i}_${Date.now()}.jpg`).then(url => { if(url) evtObj.gallery.push(url); loaded++; if(loaded === galleryInput.files.length) resolve(); }).catch(() => { loaded++; if(loaded === galleryInput.files.length) resolve(); }); } else { loaded++; if(loaded === galleryInput.files.length) resolve(); } }); } } else resolve(); });
-    Promise.all([p1, p2]).then(() => { 
-        const idx = db.events.findIndex(e => e.id == evtObj.id); 
-        if(idx > -1) { db.events[idx] = evtObj; saveDB('events'); } 
-        else { db.events.push(evtObj); saveDB('events'); } 
+    const cover = fileInput && fileInput.files && fileInput.files[0];
+    const gallery = galleryInput && galleryInput.files ? Array.from(galleryInput.files) : [];
+    let etapa = cover || gallery.length ? 'midia' : 'conexao';
+    btn.innerText = etapa === 'midia' ? 'ENVIANDO FOTOS...' : 'CONECTANDO...';
+    const preparePhoto = file => awaitWithTimeout(new Promise((resolve, reject) => {
+        compressImage(file, 800, base64 => {
+            if (base64) resolve(base64);
+            else reject(Object.assign(new Error('Não foi possível preparar a foto'), {code:'media/invalid'}));
+        });
+    }), 15000, 'media/timeout', 'A preparação da foto demorou a responder');
+    const sendPhoto = async (file, photoPath) => {
+        const base64 = await preparePhoto(file);
+
+        const url = await uploadImageToStorage(base64, photoPath);
+        if (!url) throw Object.assign(new Error('O envio não retornou o endereço da foto'), {code:'storage/missing-url'});
+        return url;
+    };
+    const p1 = cover ? sendPhoto(cover, `capa_${evtObj.id}.jpg`).then(url => { evtObj.img = url; }) : Promise.resolve();
+    const p2 = Promise.all(gallery.map((file, index) => sendPhoto(file, `galeria_${evtObj.id}_${index}_${Date.now()}.jpg`))).then(urls => {
+        evtObj.gallery.push(...urls);
+    });
+    return Promise.all([p1, p2]).then(async () => {
+
+        etapa = 'gravacao';
+        btn.innerText = 'AGUARDANDO CONFIRMAÇÃO...';
+        const nextEvents = db.events.slice();
+        const idx = nextEvents.findIndex(e => e.id == evtObj.id);
+        if (idx > -1) nextEvents[idx] = evtObj;
+        else nextEvents.push(evtObj);
+        await persistScoringModule('events', nextEvents);
+        db.events = nextEvents;
+        try { localStorage.setItem(DB_KEY, JSON.stringify(db)); } catch (_) {}
         if (!isEdit && evtObj.status === 'OPEN') {
-    dispararPushGeral("Nova Etapa no Ar! 🏁🏆", `As inscrições para a etapa "${evtObj.t}" estão abertas. Garanta sua vaga!`);
-} 
-        toast(isEdit ? "EVENTO ATUALIZADO!" : "EVENTO SALVO!"); 
-        btn.innerText = "SALVAR EVENTO"; renderAdmEvents(); clearEventForm(); renderContent('calendar'); 
-    }).catch((e) => { toast("ERRO: Falha ao salvar.", "error"); btn.innerText = originalText; });
+            dispararPushGeral('Nova Etapa no Ar! 🏁🏆', 'As inscrições para a etapa "' + evtObj.t + '" estão abertas. Garanta sua vaga!');
+        }
+        toast(isEdit ? 'EVENTO ATUALIZADO!' : 'EVENTO SALVO!');
+        btn.disabled = false;
+        btn.innerText = 'SALVAR EVENTO';
+        renderAdmEvents(); clearEventForm(); renderContent('calendar');
+    }).catch(error => {
+        console.warn('[EVENT] Falha ao gravar:', error.code || error.message);
+        const denied = /permission[\s_-]*denied|unauthorized|unauthenticated/i.test(String(error.code || '') + ' ' + String(error.message || ''));
+        let message;
+        if (etapa === 'midia') {
+            message = error.code === 'storage/timeout'
+                ? 'NÃO FOI POSSÍVEL CONFIRMAR O ENVIO DA FOTO A TEMPO. OS CAMPOS E A FOTO SELECIONADA FORAM MANTIDOS.'
+                : denied
+                    ? 'O SERVIDOR NÃO AUTORIZOU O ENVIO DA FOTO. OS CAMPOS E A FOTO SELECIONADA FORAM MANTIDOS.'
+                    : 'NÃO FOI POSSÍVEL PREPARAR OU ENVIAR A FOTO. OS CAMPOS E A FOTO SELECIONADA FORAM MANTIDOS.';
+        } else if (error.code === 'save/timeout' || error.code === 'save/pending') {
+            message = 'A GRAVAÇÃO AINDA NÃO FOI CONFIRMADA E PODE CONCLUIR DEPOIS. CONFIRA A LISTA; A NOVA TENTATIVA USARÁ O MESMO EVENTO.';
+        } else if (error.code === 'save/connection-timeout' || error.code === 'save/not-connected') {
+            message = 'SEM CONEXÃO CONFIRMADA COM O FIREBASE. NENHUM NOVO ENVIO FOI INICIADO; OS CAMPOS FORAM MANTIDOS.';
+        } else {
+            message = denied ? 'A GRAVAÇÃO DE EVENTOS ESTÁ BLOQUEADA NO SERVIDOR.' : 'NÃO FOI POSSÍVEL SALVAR O EVENTO. OS CAMPOS FORAM MANTIDOS.';
+        }
+        toast(message, 'error');
+        btn.disabled = false;
+        btn.innerText = originalText;
+    });
+
 };
 window.editEvent = function(id) { 
     const e = db.events.find(ev => ev.id == id);
@@ -5693,14 +5882,20 @@ window.editEvent = function(id) {
             if(e.extraVals) { setAndSave('adm-evt-v-estreante', e.extraVals['ESTREANTE (EXTRA)'] || '');
             setAndSave('adm-evt-v-open', e.extraVals['OPEN (EXTRA)'] || ''); setAndSave('adm-evt-v-rigida', e.extraVals['RÍGIDA (EXTRA)'] || ''); setAndSave('adm-evt-v-ebike', e.extraVals['E-BIKE (EXTRA)'] || ''); setAndSave('adm-evt-v-pcd', e.extraVals['PCD (EXTRA)'] || '');
             } else { setAndSave('adm-evt-v-estreante', ''); setAndSave('adm-evt-v-open', ''); setAndSave('adm-evt-v-rigida', ''); setAndSave('adm-evt-v-ebike', ''); setAndSave('adm-evt-v-pcd', ''); }
-            const checkQ = document.getElementById('adm-evt-has-qualify');
-            if(e.hasQualify) { checkQ.checked = true; localStorage.setItem('autosave_adm-evt-has-qualify', true); setAndSave('adm-evt-q-date', e.qDate || ''); setAndSave('adm-evt-q-time', e.qTime || '');
-            } else { checkQ.checked = false; localStorage.setItem('autosave_adm-evt-has-qualify', false); setAndSave('adm-evt-q-date', ''); setAndSave('adm-evt-q-time', ''); }
-            toggleQualifyInputs(); renderPointsInputs(e.points || BLANK_POINTS, 'evt-points-grid', 'pt-');
-            renderPointsInputs(e.qPoints || BLANK_POINTS, 'evt-q-points-grid', 'q-pt-'); 
-            for(let i=0; i<20; i++) { localStorage.setItem('autosave_pt-'+i, e.points ? (e.points[i]||'') : '');
-            localStorage.setItem('autosave_q-pt-'+i, e.qPoints ? (e.qPoints[i]||'') : ''); }
         }
+        setAndSave('adm-evt-points-enabled', String(window.DHNDScoring.isScoringEvent(e)));
+        const checkQ = document.getElementById('adm-evt-has-qualify');
+        checkQ.checked = !!e.hasQualify;
+        localStorage.setItem('autosave_adm-evt-has-qualify', checkQ.checked);
+        setAndSave('adm-evt-q-date', e.qDate || '');
+        setAndSave('adm-evt-q-time', e.qTime || '');
+        for(let i=0; i<20; i++) {
+            localStorage.setItem('autosave_pt-'+i, e.points && e.points[i] !== undefined ? e.points[i] : '');
+            localStorage.setItem('autosave_q-pt-'+i, e.qPoints && e.qPoints[i] !== undefined ? e.qPoints[i] : '');
+        }
+        renderPointsInputs(e.points || BLANK_POINTS, 'evt-points-grid', 'pt-', false);
+        renderPointsInputs(e.qPoints || BLANK_POINTS, 'evt-q-points-grid', 'q-pt-', false);
+        toggleQualifyInputs();
 
         toggleEventType();
         renderAdmGalleryPreviews(e); 
@@ -5708,10 +5903,21 @@ window.editEvent = function(id) {
     } 
 };
 
-window.delEvent = function(id) { 
-    if(!isSuperAdmin(loggedUser)) return toast("Sem permissão", "error");
-    showConfirm("EXCLUIR EVENTO?", "Tem certeza que deseja excluir este evento e todos os seus dados?", '<i class="fas fa-trash-alt" style="color:var(--pe-red)"></i>', function(res) {
-        if(res) { const idx = db.events.findIndex(e => e.id == id); if(idx > -1) { db.events.splice(idx, 1); saveDB('events'); window.logAction(`Excluiu o evento ID: ${id}`); renderAdmEvents(); toast("EVENTO EXCLUÍDO"); } }
+window.delEvent = function(id) {
+    if(!isSuperAdmin(loggedUser)) return toast('Sem permissão', 'error');
+    showConfirm('EXCLUIR EVENTO?', 'Tem certeza que deseja excluir este evento e todos os seus dados?', '<i class="fas fa-trash-alt" style="color:var(--pe-red)"></i>', async function(res) {
+        if(!res) return;
+        const nextEvents = db.events.filter(event => String(event.id) !== String(id));
+        try {
+            await persistScoringModule('events', nextEvents);
+            db.events = nextEvents;
+            window.logAction('Excluiu o evento ID: ' + id);
+            renderAdmEvents(); renderContent('calendar');
+            toast('EVENTO EXCLUÍDO');
+        } catch (error) {
+            const uncertain = error.code === 'save/timeout' || error.code === 'save/pending';
+            toast(uncertain ? 'A EXCLUSÃO AINDA NÃO FOI CONFIRMADA E PODE CONCLUIR DEPOIS. CONFIRA A LISTA ANTES DE TENTAR NOVAMENTE.' : 'NÃO FOI POSSÍVEL EXCLUIR O EVENTO NO SERVIDOR.', 'error');
+        }
     });
 };
 
@@ -7362,7 +7568,7 @@ window.deleteRes = function(index) {
 
 
                         // ------------------------------------------
-                        // REMOVE DO DH-PE
+                        // REMOVE DO DH-ND
                         // ------------------------------------------
                         temposRemotos.splice(
                             index,
@@ -7494,7 +7700,7 @@ function recalcRanking(filterEvtId = 'ALL', filterRegion = 'ALL') {
     
     db.events.forEach(evt => { 
         if(filterEvtId !== 'ALL' && String(evt.id) !== String(filterEvtId)) return; 
-        if(evt.status === 'CANCELLED') return; 
+        if(evt.status === 'CANCELLED' || !window.DHNDScoring.isScoringEvent(evt)) return; 
         
         let evtTimes = db.tempos.filter(t => String(t.evtId) === String(evt.id)); 
         
@@ -7568,7 +7774,7 @@ window.compartilharResultados = function(tipo) {
     const listDiv = document.getElementById('list-' + tipo);
     if (!listDiv || listDiv.innerHTML.trim() === '') return toast("Nenhum dado para compartilhar", "error");
     let printWin = window.open('', '_blank');
-    let title = tipo === 'tempos' ? 'Resultados Oficiais' : 'Ranking Geral Oficial';
+    let title = tipo === 'tempos' ? 'Resultados Oficiais' : 'Ranking Geral';
     let html = `<html><head><title>${title}</title><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"><style>:root { --pe-blue: #0038a8; --pe-red: #d50000; --pe-green: #009b3a; --pe-yellow: #ffe500; } * { box-sizing: border-box !important; } body { font-family: Arial, sans-serif; padding: 20px; color: #333; background: #fff; margin:0; } .print-container { max-width: 800px; margin: 0 auto; background: #fff; padding: 10px; width: 100%; overflow: hidden; } .print-header { padding: 15px; border-radius: 8px; text-align: center; margin-bottom: 20px; color: white; background: var(--pe-blue); -webkit-print-color-adjust: exact; print-color-adjust: exact; } .rank-row { border: 1px solid #ddd; margin-bottom: 5px; padding: 8px; border-radius: 6px; width: 100%; } .badge-city { background: #e2e8f0; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: bold; color: #475569; -webkit-print-color-adjust: exact; print-color-adjust: exact; } .badge-cat, .badge-cat-extra { background: #e0e7ff; color: #3730a3; padding: 3px 8px; border-radius: 4px; font-size: 10px; font-weight: bold; -webkit-print-color-adjust: exact; print-color-adjust: exact; } .cat-print-page { margin-bottom: 10px; border: 2px solid #0038a8; border-radius: 8px; overflow: hidden; width: 100%; } .cat-title-box { background: #0038a8 !important; color: white !important; padding: 10px; font-weight: bold; text-align: center; text-transform: uppercase; font-size: 16px; -webkit-print-color-adjust: exact; print-color-adjust: exact; } @media print { @page { margin: 1cm; size: A4 portrait; } body { padding: 0; } .print-container { max-width: 100%; width: 100%; padding:0; overflow: hidden; } .cat-print-page { page-break-after: auto !important; page-break-inside: auto !important; break-inside: auto !important; margin-bottom: 15px !important; } .rank-row { page-break-inside: avoid !important; break-inside: avoid !important; width: 100%; } .no-print { display: none !important; } * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; } }</style></head><body><div style="text-align:center; margin-bottom:20px;" class="no-print"><button onclick="window.print()" style="padding:12px 24px; background:#009b3a; color:white; border:none; border-radius:6px; font-weight:bold; cursor:pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">🖨️ IMPRIMIR / SALVAR PDF</button><button onclick="window.close()" style="padding:12px 24px; background:#d50000; color:white; border:none; border-radius:6px; font-weight:bold; cursor:pointer; margin-left:10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">❌ FECHAR ABA</button></div><div class="print-container">${listDiv.innerHTML}</div></body></html>`;
     printWin.document.write(html); printWin.document.close(); setTimeout(() => { printWin.focus(); }, 250);
 };
@@ -8310,7 +8516,7 @@ window.alternarPublicacaoOrdemLargada = function() {
 
 
             const mensagem =
-                `A ordem de largada da etapa "${evt.t}" já foi publicada. Abra o DH-PE para conferir sua categoria e posição.`;
+                `A ordem de largada da etapa "${evt.t}" já foi publicada. Abra o DH-ND para conferir sua categoria e posição.`;
 
 
             // Evita mandar duas vezes para o mesmo celular.
@@ -8549,7 +8755,7 @@ window.imprimirOrdemLargadaGeral = function() {
         html += `</tbody></table>`;
     });
 
-    html += `<div class="footer">Gerado pelo Sistema DH-PE • ${new Date().toLocaleString('pt-BR')}</div></body></html>`;
+    html += `<div class="footer">Gerado pelo Sistema DH-ND • ${new Date().toLocaleString('pt-BR')}</div></body></html>`;
 
     let printWin = window.open('', '_blank');
     printWin.document.write(html);
@@ -8661,7 +8867,7 @@ window.solicitarPermissaoPush = async function() {
                 const titulo =
                     payload?.notification?.title ||
                     payload?.data?.title ||
-                    "DH-PE";
+                    "DH-ND";
 
                 const corpo =
                     payload?.notification?.body ||

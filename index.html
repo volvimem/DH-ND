@@ -11,20 +11,20 @@
     
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
-    <meta name="apple-mobile-web-app-title" content="DH-PE">
+    <meta name="apple-mobile-web-app-title" content="DH-ND">
     
-    <title>DH-PE v1.0 OFICIAL | SISTEMA UNIFICADO</title>
+    <title>DH-ND v1.0 OFICIAL | SISTEMA UNIFICADO</title>
     
-    <link rel="manifest" href="manifest.json?v=14">
-    <link rel="icon" type="image/png" href="logo.png?v=14">
-    <link rel="apple-touch-icon" href="logo.png?v=14">
+    <link rel="manifest" href="manifest.json?v=16">
+    <link rel="icon" type="image/png" href="logo.png?v=16">
+    <link rel="apple-touch-icon" href="logo.png?v=16">
     
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
     
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     
-    <link rel="stylesheet" href="style.css?v=158"> 
+    <link rel="stylesheet" href="style.css?v=160"> 
 </head>
 <body>
 
@@ -54,7 +54,7 @@
         <div class="login-overlay-layer"></div>
         <div class="login-content-layer">
             <img src="logo.png" class="login-logo-img" alt="Logo">
-            <h1>CAMPEONATO PERNAMBUCANO DE DOWNHILL</h1>
+            <h1>CAMPEONATO NORDESTE DE DOWNHILL</h1>
             <span class="login-season-text">TEMPORADA <span id="lbl-season-year">...</span></span>
         
             <div class="input-group">
@@ -233,8 +233,8 @@
                 </div>
                 <div class="filter-row" style="margin-top:5px; display:flex; flex-direction:column; gap:5px;">
                     <select id="filter-region-ranking" onchange="renderContent('ranking')" style="padding:10px; font-size:12px; font-weight:900; background:#fff3e0; border:2px solid #ffa000; color:#e65100; border-radius:6px;">
-                        <option value="PE">🏆 RANKING PERNAMBUCANO (OFICIAL)</option>
-                        <option value="NORDESTE">🌎 RANKING NORDESTE (OPEN)</option>
+                        <option value="PE">🏆 PERNAMBUCO</option>
+                        <option value="NORDESTE">🌎 RANKING NORDESTE</option>
                     </select>
                     <div style="display:flex; gap:5px;">
                         <select id="filter-mode-ranking" onchange="renderContent('ranking')" style="flex:0.8; font-weight:bold; color:var(--pe-blue); background:#eef2ff; border:1px solid #c7d2fe; border-radius:4px; padding:5px; font-size:11px;">
@@ -285,7 +285,7 @@
                     </div>
                     <div class="id-card-header">
                         <img src="logo.png">
-                        <span>FEDERAÇÃO PERNAMBUCANA</span>
+                        <span>FEDERAÇÃO BRASILEIRA</span>
                     </div>
                     <div class="id-card-body">
                         <div class="id-photo-box" onclick="document.getElementById('hidden-upload').click()">
@@ -421,6 +421,14 @@
                             <div><label style="font-size:9px">TIPO</label><select id="adm-evt-type" onchange="toggleEventType()"><option value="PE">FPC/PE (AZUL)</option><option value="CBC">CBC (DOURADO)</option><option value="NON_OFFICIAL">NÃO OFICIAL</option></select></div>
                         </div>
                         
+                        <div id="adm-evt-scoring-choice" style="display:none; margin-top:8px; padding:10px; background:#eef2ff; border:1px solid #c7d2fe; border-radius:6px;">
+                            <label for="adm-evt-points-enabled" style="font-size:11px; font-weight:bold;">PONTUAÇÃO NO RANKING</label>
+                            <select id="adm-evt-points-enabled" onchange="toggleEventType()" style="margin-top:5px;">
+                                <option value="false">Não pontuar</option>
+                                <option value="true">Pontuar usando a tabela de pontos</option>
+                            </select>
+                            <p style="font-size:11px; margin:6px 0 0; color:#475569;">As etapas que pontuam entram na soma da temporada. Use uma tabela já cadastrada ou preencha os pontos abaixo.</p>
+                        </div>
                         <input id="adm-evt-d" placeholder="DIAS (Ex: 21/22 ou 21)" class="input-field" style="margin-top:5px; padding:8px" oninput="mascaraDias(this)" maxlength="5">
                         <input id="adm-evt-c" placeholder="CIDADE" class="uppercase-input input-field" style="margin-top:5px; padding:8px">
             
@@ -438,35 +446,7 @@
                                 </div>
                             </div>
             
-                            <div style="margin-top:5px; background:#fff8e1; padding:5px; border:1px solid #ffe500; border-radius:5px;">
-                                <div style="display:flex; align-items:center; gap:5px; margin-bottom:5px;">
-                                    <input type="checkbox" id="adm-evt-has-qualify" style="width:auto;" onchange="toggleQualifyInputs()">
-                                    <label for="adm-evt-has-qualify" style="margin:0; font-size:11px; font-weight:bold;">TERÁ QUALIFY?</label>
-                                </div>
-                                <div id="adm-qualify-inputs" style="display:grid; grid-template-columns: 1fr 1fr; gap:5px; opacity:0.5; pointer-events:none;">
-                                    <input type="date" id="adm-evt-q-date" class="input-field">
-                                    <input type="time" id="adm-evt-q-time" class="input-field">
-                                </div>
-                            </div>
-            
-                            <div style="margin-top:10px; border-top:1px dashed #ccc; padding-top:5px; background:#eef2ff; border-radius:5px; padding:5px;">
-                                <b style="font-size:10px; color:#0038a8;">COPIAR PONTUAÇÃO DE OUTRO EVENTO</b>
-                                <div style="display:flex; gap:5px; margin-top:5px;">
-                                    <select id="adm-evt-copy-source" class="input-field" style="font-size:10px;">
-                                        <option value="">SELECIONE EVENTO PARA COPIAR...</option>
-                                    </select>
-                                    <button class="btn-mini-adm" style="background:var(--pe-blue)" onclick="copiarPontosDe()">COPIAR</button>
-                                </div>
-                            </div>
-            
-                            <div style="margin-top:10px; border-top:1px dashed #ccc; padding-top:5px">
-                                <b style="font-size:10px">PONTUAÇÃO OFICIAL (1º ao 20º)</b>
-                                <div id="evt-points-grid" style="display:grid; grid-template-columns: repeat(5, 1fr); gap:3px; margin-top:5px;"></div>
-                            </div>
-                            <div style="margin-top:10px; border-top:1px dashed #ffa000; padding-top:5px; background:#fff3e0;">
-                                <b style="font-size:10px; color:#e65100">PONTUAÇÃO QUALIFY (1º ao 20º)</b>
-                                <div id="evt-q-points-grid" style="display:grid; grid-template-columns: repeat(5, 1fr); gap:3px; margin-top:5px;"></div>
-                            </div>
+
                         </div>
                         
                         <div id="adm-evt-nonofficial-group" style="display:none; margin-top:10px; background:#fefce8; padding:8px; border-radius:6px; border:1px solid #fde047;">
@@ -490,6 +470,38 @@
                                     <input id="adm-evt-n-extra2" placeholder="NOME EXTRA 2" class="uppercase-input input-field" style="padding:6px; font-size:10px;">
                                     <input id="adm-evt-v-extra2" placeholder="VALOR (R$)" type="tel" class="input-field" style="padding:6px; font-size:10px;">
                                 </div>
+                            </div>
+                        </div>
+            
+                        <div id="adm-evt-scoring-group">
+                            <div style="margin-top:5px; background:#fff8e1; padding:5px; border:1px solid #ffe500; border-radius:5px;">
+                                <div style="display:flex; align-items:center; gap:5px; margin-bottom:5px;">
+                                    <input type="checkbox" id="adm-evt-has-qualify" style="width:auto;" onchange="toggleQualifyInputs()">
+                                    <label for="adm-evt-has-qualify" style="margin:0; font-size:11px; font-weight:bold;">TERÁ QUALIFY?</label>
+                                </div>
+                                <div id="adm-qualify-inputs" style="display:grid; grid-template-columns: 1fr 1fr; gap:5px; opacity:0.5; pointer-events:none;">
+                                    <input type="date" id="adm-evt-q-date" class="input-field">
+                                    <input type="time" id="adm-evt-q-time" class="input-field">
+                                </div>
+                            </div>
+            
+                            <div style="margin-top:10px; border-top:1px dashed #ccc; padding-top:5px; background:#eef2ff; border-radius:5px; padding:5px;">
+                                <b style="font-size:10px; color:#0038a8;">COPIAR PONTUAÇÃO DE OUTRO EVENTO</b>
+                                <div style="display:flex; gap:5px; margin-top:5px;">
+                                    <select id="adm-evt-copy-source" class="input-field" style="font-size:10px;">
+                                        <option value="">SELECIONE EVENTO PARA COPIAR...</option>
+                                    </select>
+                                    <button class="btn-mini-adm" style="background:var(--pe-blue)" onclick="copiarPontosDe()">COPIAR</button>
+                                </div>
+                            </div>
+            
+                            <div style="margin-top:10px; border-top:1px dashed #ccc; padding-top:5px">
+                                <b style="font-size:10px">PONTUAÇÃO DA CORRIDA (1º ao 20º)</b>
+                                <div id="evt-points-grid" style="display:grid; grid-template-columns: repeat(5, 1fr); gap:3px; margin-top:5px;"></div>
+                            </div>
+                            <div style="margin-top:10px; border-top:1px dashed #ffa000; padding-top:5px; background:#fff3e0;">
+                                <b style="font-size:10px; color:#e65100">PONTUAÇÃO QUALIFY (1º ao 20º)</b>
+                                <div id="evt-q-points-grid" style="display:grid; grid-template-columns: repeat(5, 1fr); gap:3px; margin-top:5px;"></div>
                             </div>
                         </div>
             
@@ -810,7 +822,7 @@
     </div>
 </div>
 
-<div class="modal-overlay" id="modal-extra-sub"><div class="modal-box"><h3 style="color:var(--pe-blue)">NOVA INSCRIÇÃO</h3><div id="extra-existing-subs" style="background:#f8fafc; padding:10px; border-radius:6px; margin-bottom:15px; display:none; border:1px dashed #cbd5e1;"><span style="font-size:10px; color:#666; display:block; margin-bottom:5px;">JÁ INSCRITO EM:</span><div id="extra-existing-list" style="font-weight:bold; font-size:12px; color:var(--pe-blue); display:flex; flex-direction:column; gap:5px;"></div></div><p style="font-size:12px; color:#666; margin-bottom:15px;">Escolha uma categoria permitida para sua inscrição (Não Oficial):</p><label style="font-size:10px; font-weight:bold; color:var(--pe-blue)">CATEGORIA EXTRA</label><select id="extra-sub-cat" class="input-field" style="margin-bottom:15px;"></select><button class="btn" onclick="confirmarInscricaoExtra()" style="background:var(--pe-green)">CONFIRMAR INSCRIÇÃO</button><button class="btn" onclick="fecharModal('modal-extra-sub')" style="background:#ccc; color:#333; margin-top:5px;">CANCELAR</button></div></div>
+<div class="modal-overlay" id="modal-extra-sub"><div class="modal-box"><h3 style="color:var(--pe-blue)">NOVA INSCRIÇÃO</h3><div id="extra-existing-subs" style="background:#f8fafc; padding:10px; border-radius:6px; margin-bottom:15px; display:none; border:1px dashed #cbd5e1;"><span style="font-size:10px; color:#666; display:block; margin-bottom:5px;">JÁ INSCRITO EM:</span><div id="extra-existing-list" style="font-weight:bold; font-size:12px; color:var(--pe-blue); display:flex; flex-direction:column; gap:5px;"></div></div><p id="extra-sub-help" style="font-size:12px; color:#666; margin-bottom:15px;">Escolha uma categoria permitida para sua inscrição (Não Oficial):</p><label id="extra-sub-label" style="font-size:10px; font-weight:bold; color:var(--pe-blue)">CATEGORIA EXTRA</label><select id="extra-sub-cat" class="input-field" style="margin-bottom:15px;"></select><button class="btn" onclick="confirmarInscricaoExtra()" style="background:var(--pe-green)">CONFIRMAR INSCRIÇÃO</button><button class="btn" onclick="fecharModal('modal-extra-sub')" style="background:#ccc; color:#333; margin-top:5px;">CANCELAR</button></div></div>
 
 <div class="modal-overlay" id="modal-super-edit">
     <div class="modal-box" style="width: 90%; max-width: 400px; padding: 20px;">
@@ -956,7 +968,7 @@
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
-    <title>DH-PE | Live Timing Oficial</title>
+    <title>DH-ND | Live Timing Oficial</title>
     <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-database-compat.js"></script>
     <style>
@@ -969,7 +981,7 @@
 <body>
 <div class="app-container">
   <aside class="sidebar-left custom-scroll">
-    <div class="logo"><i class="fas fa-mountain"></i> PE Downhill</div>
+    <div class="logo"><i class="fas fa-mountain"></i> DH-ND Downhill</div>
     <div class="ranking-box">
       <div class="ranking-header">
         <div class="header-title"><i class="fas fa-trophy" style="color:#ffc107"></i> TOP PERNAMBUCO</div>
@@ -1070,14 +1082,14 @@
 
 <script>
     const firebaseConfig = {
-        apiKey: "AIzaSyDilUDfyFsebnbQ9pAXyL7ptbSy5CY_cmk",
-        authDomain: "fpc-per.firebaseapp.com",
-        databaseURL: "https://fpc-per-default-rtdb.firebaseio.com",
-        projectId: "fpc-per",
-        storageBucket: "fpc-per.firebasestorage.app",
-        messagingSenderId: "817616563956",
-        appId: "1:817616563956:web:21dbbbcbb69e0cae10f8a1"
-    };
+    apiKey: "AIzaSyDilUDfyFsebnbQ9pAXyL7ptbSy5CY_cmk",
+    authDomain: "fpc-per.firebaseapp.com",
+    databaseURL: "https://fpc-per-default-rtdb.firebaseio.com",
+    projectId: "fpc-per",
+    storageBucket: "fpc-per.firebasestorage.app",
+    messagingSenderId: "817616563956",
+    appId: "1:817616563956:web:21dbbbcbb69e0cae10f8a1"
+};
     firebase.initializeApp(firebaseConfig);
     const dbFirebase = firebase.database();
 
@@ -1557,7 +1569,7 @@ refreshListsOnly();
             html += `<p style="text-align:center; padding: 20px;">Nenhum atleta na fila de largada.</p>`;
         }
 
-        html += `<div class="footer">Gerado pelo Sistema DH-PE • ${new Date().toLocaleString('pt-BR')}</div></body></html>`;
+        html += `<div class="footer">Gerado pelo Sistema DH-ND • ${new Date().toLocaleString('pt-BR')}</div></body></html>`;
 
         let printWin = window.open('', '_blank');
         printWin.document.write(html);
@@ -1585,7 +1597,7 @@ refreshListsOnly();
     <div style="display:flex; align-items:center; gap:10px;">
         <img src="logo.png" style="width:40px; height:40px; border-radius:8px;">
         <div style="text-align:left;">
-            <b style="color:var(--pe-blue); font-size:12px; display:block;">Baixar App DH-PE</b>
+            <b style="color:var(--pe-blue); font-size:12px; display:block;">Baixar App DH-ND</b>
             <span style="font-size:10px; color:#666;">Mais rápido e não gasta memória!</span>
         </div>
     </div>
@@ -1601,7 +1613,8 @@ refreshListsOnly();
 <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-storage-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-messaging-compat.js"></script>
 
-<script src="script.js?v=158"></script>
+<script src="ranking-policy.js?v=1"></script>
+<script src="script.js?v=164"></script>
 
 </body>
 </html>

@@ -38,7 +38,7 @@ messaging.onBackgroundMessage((payload) => {
     // Fallback para mensagens antigas enviadas somente com DATA.
     const titulo =
         payload?.data?.title ||
-        "DH-PE";
+        "DH-ND";
 
     const corpo =
         payload?.data?.body ||
@@ -114,7 +114,7 @@ self.addEventListener("notificationclick", (event) => {
 // ==========================================================
 // PARTE 2: PWA E CACHE
 // ==========================================================
-const CACHE_NAME = 'dhpe-v10-x1';
+const CACHE_NAME = 'dhnd-v11-20261117';
 
 self.addEventListener('install', (event) => {
     self.skipWaiting(); 

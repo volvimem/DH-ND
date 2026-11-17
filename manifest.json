@@ -1,7 +1,7 @@
 {
-  "name": "DH-PE Oficial",
-  "short_name": "DH-PE",
-  "description": "Sistema Oficial do Campeonato Pernambucano",
+  "name": "DH-ND Oficial",
+  "short_name": "DH-ND",
+  "description": "Sistema Oficial Downhill Nordeste",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

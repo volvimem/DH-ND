@@ -1,4 +1,4 @@
-/* DH-CLUB+ BETA — módulo separado do DH-PE principal */
+/* DH-CLUB+ BETA — módulo separado do DH-ND principal */
 (function(){
 'use strict';
 
@@ -2957,7 +2957,7 @@ function hasClubAccess() {
   // ACESSO GRATUITO GERAL
   //
   // Enquanto MODO BETA estiver ATIVO,
-  // qualquer atleta autenticado no DH-PE
+  // qualquer atleta autenticado no DH-ND
   // pode entrar no DH-Club.
   // ========================================================
 
@@ -4009,7 +4009,7 @@ function mySeasonComparison() {
 }
 
   // ==========================================================
-// RANKING OFICIAL POR PONTOS — DH-PE
+// RANKING OFICIAL POR PONTOS — DH-ND
 // ==========================================================
 
 function officialPointsRanking() {
@@ -4226,6 +4226,7 @@ if (
 
       if (
         !event ||
+        !window.DHNDScoring.isScoringEvent(event) ||
         event.status ===
           'CANCELLED'
       ) {
@@ -5176,7 +5177,7 @@ function isOfficialScoringEvent(
   event
 ) {
 
-  if (!event) {
+  if (!event || !window.DHNDScoring.isScoringEvent(event)) {
 
     return false;
   }
@@ -5782,7 +5783,7 @@ const maxSeasonPoints =
       'COMUM',
       'fa-flag-checkered',
       'PRIMEIRA LARGADA',
-      'Registrou seu primeiro resultado oficial no DH-PE.',
+      'Registrou seu primeiro resultado oficial no DH-ND.',
       officialRaces >= 1
     ),
 
@@ -6194,7 +6195,7 @@ const maxSeasonPoints =
   'COMUM',
   'fa-coins',
   'PRIMEIROS PONTOS',
-  'Conquistou seus primeiros pontos oficiais no DH-PE.',
+  'Conquistou seus primeiros pontos no DH-ND.',
   totalPts > 0
 ),
 
@@ -6287,7 +6288,7 @@ A(
       'COMUM',
       'fa-list-ol',
       'TOP 20 DO RANKING',
-      'Chegou ao Top 20 do ranking oficial da categoria.',
+      'Chegou ao Top 20 do ranking da categoria.',
       categoryPosition > 0 &&
       categoryPosition <= 20
     ),
@@ -6298,7 +6299,7 @@ A(
       'RARO',
       'fa-list-ol',
       'TOP 10 DO RANKING',
-      'Chegou ao Top 10 do ranking oficial da categoria.',
+      'Chegou ao Top 10 do ranking da categoria.',
       categoryPosition > 0 &&
       categoryPosition <= 10
     ),
@@ -6309,7 +6310,7 @@ A(
       'ÉPICO',
       'fa-ranking-star',
       'TOP 5 DO RANKING',
-      'Chegou ao Top 5 do ranking oficial da categoria.',
+      'Chegou ao Top 5 do ranking da categoria.',
       categoryPosition > 0 &&
       categoryPosition <= 5
     ),
@@ -6320,7 +6321,7 @@ A(
       'ÉPICO',
       'fa-ranking-star',
       'TOP 3 DO RANKING',
-      'Chegou ao Top 3 do ranking oficial da categoria.',
+      'Chegou ao Top 3 do ranking da categoria.',
       categoryPosition > 0 &&
       categoryPosition <= 3
     ),
@@ -6331,7 +6332,7 @@ A(
       'LENDÁRIO',
       'fa-crown',
       'LÍDER DA CATEGORIA',
-      'Assumiu a 1ª posição do ranking oficial da categoria.',
+      'Assumiu a 1ª posição do ranking da categoria.',
       categoryPosition === 1 &&
       categoryTotal > 0
     ),
@@ -6371,7 +6372,7 @@ A(
       'LENDÁRIO',
       'fa-location-crosshairs',
       'Nº 1 DA CIDADE',
-      'É o atleta com maior pontuação oficial da sua cidade.',
+      'É o atleta com maior pontuação da sua cidade.',
       cityPosition === 1 &&
       cityAthletes >= 2
     ),
@@ -6682,7 +6683,7 @@ const officialRaces =
     'TEMPORADA PRESENTE',
 
   desc:
-    `Participe das ${totalEvents} etapas oficiais pontuáveis da temporada.`,
+    `Participe das ${totalEvents} etapas pontuáveis da temporada.`,
 
   current:
     officialRaces,
@@ -8370,7 +8371,7 @@ function renderCareer() {
       >
         * Comparativo DH-Club calculado a partir
         dos resultados oficiais da temporada.
-        Não substitui o ranking oficial do campeonato.
+        Não substitui o ranking de pontos da temporada.
       </div>
 
     </div>
@@ -8378,11 +8379,11 @@ function renderCareer() {
     <div class="section-title">
 
       <h3>
-        RANKING OFICIAL
+        RANKING DA TEMPORADA
       </h3>
 
       <span>
-        PONTUAÇÃO DH-PE
+        PONTUAÇÃO DH-ND
       </span>
 
     </div>
@@ -8419,7 +8420,7 @@ function renderCareer() {
           margin-bottom:7px;
         "
       >
-        PONTUAÇÃO OFICIAL ${SYSTEM_YEAR}
+        PONTUAÇÃO DA TEMPORADA ${SYSTEM_YEAR}
       </div>
 
 
@@ -8470,7 +8471,7 @@ function renderCareer() {
         "
       >
         Pontuação acumulada no
-        ranking oficial do campeonato.
+        ranking de pontos da temporada.
       </div>
 
 
@@ -8962,8 +8963,8 @@ function renderCareer() {
         "
       >
         * Estes dados utilizam a pontuação
-        configurada oficialmente em cada etapa
-        do DH-PE.
+        configurada em cada etapa pontuável
+        do DH-ND.
       </div>
 
     </div>
@@ -9069,7 +9070,7 @@ function renderCareer() {
           margin-top:4px;
         "
       >
-        ${esc(loggedUser.cat || 'ATLETA DH-PE')}
+        ${esc(loggedUser.cat || 'ATLETA DH-ND')}
       </div>
 
     </div>
@@ -9130,7 +9131,7 @@ function renderCareer() {
           digital.
           <br><br>
           Se desejar aparecer com outra foto na arte final,
-          atualize sua imagem no perfil do DH-PE antes de
+          atualize sua imagem no perfil do DH-ND antes de
           gerar a retrospectiva.
         </div>
 
@@ -10406,7 +10407,7 @@ function renderAchievements() {
         As metas são atualizadas
         automaticamente conforme
         novos resultados oficiais
-        entram no DH-PE.
+        entram no DH-ND.
 
       </div>
 
@@ -10463,7 +10464,7 @@ function renderAchievements() {
 
       Troféus permanentes
       desbloqueados durante
-      sua carreira no DH-PE.
+      sua carreira no DH-ND.
 
     </div>
 
@@ -11034,7 +11035,7 @@ function x1Card(d) {
 
 // ----------------------------------------------------------
 // VERIFICA SE A CARTEIRA DIGITAL ESTÁ ATIVA
-// Usa a mesma regra do sistema principal DH-PE
+// Usa a mesma regra do sistema principal DH-ND
 // ----------------------------------------------------------
 
 function drawHasActiveDigitalCard(
@@ -20460,7 +20461,7 @@ function voltarParaAtualizarFoto() {
   const confirmou =
     confirm(
       "A retrospectiva usa a mesma foto da sua carteirinha digital.\n\n" +
-      "Você será levado ao DH-PE para atualizar sua foto no PERFIL."
+      "Você será levado ao DH-ND para atualizar sua foto no PERFIL."
     );
 
 
@@ -21144,7 +21145,7 @@ function wrappedData() {
 
 
   // ========================================================
-  // RANKING OFICIAL DH-PE
+  // RANKING OFICIAL DH-ND
   // ========================================================
 
   const officialRanking =
@@ -21755,7 +21756,7 @@ const attendancePct =
 
           Preparado para descobrir
           os números que marcaram
-          sua temporada no DH-PE?
+          sua temporada no DH-ND?
 
         </div>
 
@@ -22237,7 +22238,7 @@ const attendancePct =
       <div class="wrapped-slide">
 
         <div class="wrapped-eyebrow">
-          PONTUAÇÃO OFICIAL
+          PONTUAÇÃO DA TEMPORADA
         </div>
 
 
@@ -22264,7 +22265,7 @@ const attendancePct =
 
 
           <div class="wrapped-big-label">
-            PONTOS DH-PE
+            PONTOS DH-ND
           </div>
 
         </div>
@@ -22316,8 +22317,8 @@ const attendancePct =
         >
 
           Pontuação calculada com
-          os valores oficiais configurados
-          em cada etapa do campeonato.
+          os valores configurados
+          em cada etapa pontuável da temporada.
 
         </div>
 
@@ -22481,7 +22482,7 @@ const attendancePct =
       <div class="wrapped-slide">
 
         <div class="wrapped-eyebrow">
-          RANKING OFICIAL
+          RANKING DA TEMPORADA
         </div>
 
 
@@ -23250,7 +23251,7 @@ const attendancePct =
       <div class="wrapped-slide">
 
         <div class="wrapped-eyebrow">
-          DH-PE • ${SYSTEM_YEAR}
+          DH-ND • ${SYSTEM_YEAR}
         </div>
 
 
@@ -23754,7 +23755,7 @@ async function shareWrapped() {
 
 
   const texto =
-`🏁 MINHA TEMPORADA DH-PE ${SYSTEM_YEAR}
+`🏁 MINHA TEMPORADA DH-ND ${SYSTEM_YEAR}
 
 🚵 ${s.races} etapas disputadas
 ⭐ ${s.podiums} resultados em TOP 5
@@ -23775,7 +23776,7 @@ ${
 }
 
 Mais que uma pista, uma comunidade.
-DH-PE • Downhill Pernambuco`;
+DH-ND • Downhill Nordeste`;
 
 
   try {
@@ -23787,7 +23788,7 @@ DH-PE • Downhill Pernambuco`;
       await navigator.share({
 
         title:
-          `Minha temporada DH-PE ${SYSTEM_YEAR}`,
+          `Minha temporada DH-ND ${SYSTEM_YEAR}`,
 
         text:
           texto
@@ -24823,7 +24824,7 @@ async function generateWrappedShareImage() {
 
 
   ctx.fillText(
-    'ATLETA DH-PE',
+    'ATLETA DH-ND',
     345,
     680
   );
@@ -25080,7 +25081,7 @@ async function generateWrappedShareImage() {
 
 
   ctx.fillText(
-    'DH-PE • DOWNHILL PERNAMBUCO',
+    'DH-ND • DOWNHILL NORDESTE',
     70,
     1870
   );
@@ -25144,7 +25145,7 @@ async function shareWrapped() {
 
 
   const texto =
-`🏁 MINHA TEMPORADA DH-PE ${SYSTEM_YEAR}
+`🏁 MINHA TEMPORADA DH-ND ${SYSTEM_YEAR}
 
 🚵 ${s.races} etapas
 ⭐ ${s.podiums} resultados no Top 5
@@ -25164,7 +25165,7 @@ ${
 }
 
 Mais que uma pista, uma comunidade.
-DH-PE • Downhill Pernambuco`;
+DH-ND • Downhill Nordeste`;
 
 
   try {
@@ -25247,7 +25248,7 @@ DH-PE • Downhill Pernambuco`;
       await navigator.share({
 
         title:
-          `Minha temporada DH-PE ${SYSTEM_YEAR}`,
+          `Minha temporada DH-ND ${SYSTEM_YEAR}`,
 
         text:
           texto,
@@ -25512,7 +25513,7 @@ function bind() {
             "
           >
 
-            VOLTAR AO DH-PE
+            VOLTAR AO DH-ND
 
           </button>
 
@@ -25664,14 +25665,14 @@ async function init() {
 
 
   // ========================================================
-  // 1. CONFIRMA SESSÃO DO DH-PE
+  // 1. CONFIRMA SESSÃO DO DH-ND
   // ========================================================
 
   if (!loggedUser) {
 
     showClubGate(
-      'Entre pelo DH-PE',
-      'Sua sessão não foi encontrada.<br><br>Volte ao DH-PE e faça login novamente com seu CPF e senha.'
+      'Entre pelo DH-ND',
+      'Sua sessão não foi encontrada.<br><br>Volte ao DH-ND e faça login novamente com seu CPF e senha.'
     );
 
 
@@ -25850,7 +25851,7 @@ async function init() {
         <br><br>
 
         Toque em
-        <b>VOLTAR AO DH-PE</b>
+        <b>VOLTAR AO DH-ND</b>
         e faça login novamente
         com seu CPF e senha.
 
