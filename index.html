@@ -569,7 +569,7 @@
                                 </button>
 
                                 <!-- BOTÃO DE GERAR EXCEL LARGADA -->
-                                <button class="btn-live-launch" title="Baixar Planilha de Largada" style="background:#107c41; color:white; padding:6px 10px; border:none; border-radius:4px; font-weight:bold; font-size:10px; cursor:pointer; display:flex; align-items:center; gap:5px;" onclick="window.gerarExcelLargada()">
+                                <button class="btn-live-launch" title="Baixar largada com CONFIG pronta para Google Sheets" style="background:#107c41; color:white; padding:6px 10px; border:none; border-radius:4px; font-weight:bold; font-size:10px; cursor:pointer; display:flex; align-items:center; gap:5px;" onclick="window.gerarExcelLargada()">
                                     <i class="fas fa-file-excel"></i> LARGADA
                                     <!-- PUBLICA / DESPUBLICA A ORDEM PARA OS ATLETAS -->
 <button
@@ -591,6 +591,16 @@
                             </div>
                         </div>
 
+                        <details id="start-workbook-guide" style="font-size:11px; color:#334155; margin-top:10px; line-height:1.5;">
+                            <summary style="cursor:pointer; font-weight:bold;">LARGADA pronta: como iniciar no Google Sheets</summary>
+                            <ol style="padding-left:20px; margin:8px 0;">
+                                <li>Selecione o evento e o tipo de volta abaixo. Depois, clique em LARGADA.</li>
+                                <li>Abra a sua planilha de cronometragem que já envia resultados ao app.</li>
+                                <li>Use <b>Arquivo → Importar → Fazer upload</b>, escolha o arquivo baixado e selecione <b>Substituir planilha → Importar dados</b>.</li>
+                                <li>A aba CONFIG já terá o evento, a volta e a sincronização ativa. Abra a aba Largada e inicie a cronometragem como de costume.</li>
+                            </ol>
+                            <p style="margin:0;">A importação substitui as abas atuais. Para guardar a planilha da prova anterior, faça uma cópia antes. Use a planilha já conectada: abrir o arquivo como uma planilha nova não instala a integração.</p>
+                        </details>
                         <div style="display:flex; gap:5px; margin-top:10px;">
                              <select id="adm-res-evt" class="input-field" onchange="renderAdmResults()"><option value="">SELECIONE EVENTO...</option></select>
                         </div>
@@ -1620,7 +1630,7 @@ refreshListsOnly();
 
 <script src="season-policy.js?v=1"></script>
 <script src="ranking-policy.js?v=1"></script>
-<script src="script.js?v=167"></script>
+<script src="script.js?v=168"></script>
 
 </body>
 </html>

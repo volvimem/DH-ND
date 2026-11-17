@@ -7133,6 +7133,18 @@ window.gerarExcelLargada = function() {
             );
 
 
+            const configSheet = XLSX.utils.aoa_to_sheet([
+                ['A', 'B'],
+                [],
+                ['CONFIGURAÇÃO', 'VALOR'],
+                ['EVENT_ID', String(evt.id)],
+                ['TIPO_VOLTA', runLabel],
+                ['SINCRONIZACAO', 'ATIVA']
+            ]);
+            configSheet['!cols'] = [{wch:24}, {wch:24}];
+            XLSX.utils.book_append_sheet(wb, configSheet, 'CONFIG');
+
+
             const safeTitle =
                 evt.t
                     .replace(
