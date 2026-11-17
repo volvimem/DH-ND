@@ -94,6 +94,28 @@ function toast(m, type="info") {
 
 function cleanCPF(v) { return String(v).replace(/\D/g, ""); }
 function openWhatsApp(p, t) { if(p) window.open(`https://wa.me/55${cleanCPF(p)}?text=${encodeURIComponent(t)}`); }
+function normalizeEventMapsUrl(value) {
+    const text = String(value || '').trim();
+    if (!text) return '';
+    let url;
+    try { url = new URL(text); } catch (_) { throw new Error('COLE UM LINK VÁLIDO DO GOOGLE MAPS.'); }
+    const host = url.hostname.toLowerCase();
+    const direct = ['maps.google.com', 'maps.google.com.br'].includes(host);
+    const google = ['google.com', 'www.google.com', 'google.com.br', 'www.google.com.br'].includes(host) && /^\/maps(?:\/|$)/.test(url.pathname);
+    const short = (host === 'maps.app.goo.gl' && url.pathname.length > 1) ||
+        (host === 'goo.gl' && url.pathname.startsWith('/maps/')) || (host === 'g.co' && url.pathname.startsWith('/kgs/'));
+    if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || !(direct || google || short)) {
+        throw new Error('USE O LINK DE COMPARTILHAMENTO DA PISTA NO GOOGLE MAPS.');
+    }
+    url.protocol = 'https:';
+    return url.href;
+}
+function getEventMapsLink(event) {
+    let url;
+    try { url = normalizeEventMapsUrl(event && event.mapsUrl); } catch (_) { return ''; }
+    if (!url) return '';
+    return `<a href="${escapeRegistrationOption(url)}" target="_blank" rel="noopener noreferrer" title="Localização da pista no Google Maps" aria-label="Abrir localização da pista no Google Maps" style="display:inline-flex; align-items:center; color:#4285f4; font-size:20px; text-decoration:none;"><i class="fas fa-map-marker-alt" aria-hidden="true"></i></a>`;
+}
 function updateSupportLink() { 
     const phone = (db && db.config && db.config.phone) ? db.config.phone : '';
     const btn = document.getElementById('btn-support-header');
@@ -3669,7 +3691,9 @@ if (inscricoesEncerradas) {
 
 let imgHtml = e.img ? `<img src="${e.img}" class="evt-img-standard">` : `<div class="evt-img-placeholder">SEM FOTO</div>`; let html = `${getBadgeHtml(e)}${imgHtml}<div class="event-body">`;
             let wppBtn = e.wpp ? `<button onclick="openWhatsApp('${e.wpp}', 'Dúvida ${e.t}')" style="border:none; background:none; color:#25D366; font-size:18px; cursor:pointer;"><i class="fab fa-whatsapp"></i></button>` : '';
-            if(isHighlight) { html += `<div style="display:flex; justify-content:space-between; align-items:center"><div style="font-size:14px; font-weight:900; color:var(--pe-blue)">${e.t}</div>${wppBtn}</div>`; } else { html += `<div style="display:flex; justify-content:space-between; align-items:flex-start"><b style="line-height:1.2;">${e.t}</b>${wppBtn}</div>`; }
+            const mapsLink = getEventMapsLink(e);
+            const eventLinks = mapsLink || wppBtn ? `<div style="display:flex; align-items:center; gap:12px; flex-shrink:0; margin-left:8px;">${mapsLink}${wppBtn}</div>` : '';
+            if(isHighlight) { html += `<div style="display:flex; justify-content:space-between; align-items:center"><div style="font-size:14px; font-weight:900; color:var(--pe-blue)">${e.t}</div>${eventLinks}</div>`; } else { html += `<div style="display:flex; justify-content:space-between; align-items:flex-start"><b style="line-height:1.2;">${e.t}</b>${eventLinks}</div>`; }
             
             let priceHtml = `R$ ${e.val || "0,00"}`;
             
@@ -5626,8 +5650,15 @@ window.copiarPontosDe = function() {
 };
 
 
-function renderAdmEvents() { const list = document.getElementById('adm-list-events'); if(!list) return; if(!db.events || db.events.length === 0) { list.innerHTML = '<div style="color:#666; padding:10px">Nenhum evento.</div>';
-return; } list.innerHTML = db.events.map(e => `<div class="adm-card" style="display:flex; justify-content:space-between; align-items:center;"><div><b>${e.t}</b> (${e.type})<br><span style="font-size:10px; color:#666">${e.d} ${e.m || ''} / ${getEventYear(e)} | ${e.city} | ${e.status}</span></div><div style="display:flex; gap:5px;"><button class="btn-mini-adm" style="background:#3b82f6" onclick="editEvent(${e.id})"><i class="fas fa-pen"></i></button><button class="btn-mini-adm" style="background:#ef4444" onclick="delEvent(${e.id})"><i class="fas fa-trash"></i></button></div></div>`).join('');
+function renderAdmEvents() {
+    const list = document.getElementById('adm-list-events');
+    if (!list) return;
+    const events = getSeasonEvents();
+    if (!events.length) {
+        list.innerHTML = '<div style="color:#666; padding:10px">Nenhum evento cadastrado para a temporada ' + SYSTEM_YEAR + '.</div>';
+        return;
+    }
+    list.innerHTML = events.map(e => `<div class="adm-card" style="display:flex; justify-content:space-between; align-items:center;"><div><b>${e.t}</b> (${e.type})<br><span style="font-size:10px; color:#666">${e.d} ${e.m || ''} / ${getEventYear(e)} | ${e.city} | ${e.status}</span></div><div style="display:flex; gap:5px;"><button class="btn-mini-adm" style="background:#3b82f6" onclick="editEvent(${e.id})"><i class="fas fa-pen"></i></button><button class="btn-mini-adm" style="background:#ef4444" onclick="delEvent(${e.id})"><i class="fas fa-trash"></i></button></div></div>`).join('');
 }
 
 window.toggleQualifyInputs = function() {
@@ -5686,6 +5717,9 @@ window.addEvent = function() {
         btn.innerText = originalText;
         return toast('INFORME O ANO DA ETAPA COM QUATRO DÍGITOS.', 'error');
     }
+    let mapsUrl;
+    try { mapsUrl = normalizeEventMapsUrl(getVal('adm-evt-maps')); }
+    catch (error) { btn.innerText = originalText; return toast(error.message, 'error'); }
     const evtType = getVal('adm-evt-type') || 'PE';
     let extraVals = {};
     let newPoints = [], newQPoints = [];
@@ -5734,7 +5768,7 @@ window.addEvent = function() {
         val: geralVal, pix: getVal('adm-evt-pix'), status: getVal('adm-evt-status') || 'OPEN', 
         points: newPoints, qPoints: newQPoints, pointsEnabled: pointsEnabled, closeDate: getVal('adm-evt-close-date'), 
         startListDate: getVal('adm-evt-startlist-date'), open: true, img: null, gallery: [], 
-        wpp: document.getElementById('adm-evt-wpp').value, 
+        wpp: document.getElementById('adm-evt-wpp').value, mapsUrl: mapsUrl,
         hasQualify: hasQualify, qDate: hasQualify ? document.getElementById('adm-evt-q-date').value : null, 
         qTime: hasQualify ? document.getElementById('adm-evt-q-time').value : null, 
         extraVals: extraVals 
@@ -5874,6 +5908,7 @@ window.editEvent = function(id) {
         setAndSave('adm-evt-id-edit', e.id); setAndSave('adm-evt-t', e.t); setAndSave('adm-evt-d', e.d); setAndSave('adm-evt-c', e.city);
         setAndSave('adm-evt-v', e.val || ''); setAndSave('adm-evt-pix', e.pix || ''); setAndSave('adm-evt-status', e.status || 'OPEN'); setAndSave('adm-evt-close-date', e.closeDate || ''); setAndSave('adm-evt-startlist-date', e.startListDate || '');
         setAndSave('adm-evt-wpp', e.wpp || ''); 
+        setAndSave('adm-evt-maps', e.mapsUrl || '');
         if(e.m) setAndSave('adm-evt-month', e.m); if(e.type) setAndSave('adm-evt-type', e.type);
         if (e.type === 'NON_OFFICIAL') {
             if(e.extraVals) {
