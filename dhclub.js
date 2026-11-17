@@ -12,21 +12,10 @@ const firebaseConfig = {
   appId: "1:817616563956:web:21dbbbcbb69e0cae10f8a1"
 };
 
-const SYSTEM_YEAR = new Date().getFullYear();
-
-let defaultKey = 'dhpe_v25_final_stable_fix';
-
-if (SYSTEM_YEAR === 2027) {
-  defaultKey = 'dhpe_2027_active';
-}
-
-if (SYSTEM_YEAR >= 2028) {
-  defaultKey = `dhpe_${SYSTEM_YEAR}_active`;
-}
-
-const DB_KEY =
-  localStorage.getItem('dhpe_active_season') ||
-  defaultKey;
+const CLOCK_YEAR = new Date().getFullYear();
+const SEASON_CONTEXT = window.DHNDSeasons.context(localStorage, CLOCK_YEAR);
+const SYSTEM_YEAR = SEASON_CONTEXT.year;
+const DB_KEY = SEASON_CONTEXT.root;
 
 const SESS_KEY = 'dhpe_sess_v25';
 
@@ -11054,7 +11043,7 @@ function drawHasActiveDigitalCard(
       core.config?.allowAllIDsYear
     ) ===
     Number(
-      SYSTEM_YEAR
+      CLOCK_YEAR
     )
   ) {
 
@@ -11065,7 +11054,7 @@ function drawHasActiveDigitalCard(
   // Compatibilidade com 2026
 
   if (
-    SYSTEM_YEAR === 2026 &&
+    CLOCK_YEAR === 2026 &&
     core.config?.allowAllIDs === true
   ) {
 
@@ -11081,7 +11070,7 @@ function drawHasActiveDigitalCard(
       user.cardReleasedYear
     ) ===
     Number(
-      SYSTEM_YEAR
+      CLOCK_YEAR
     )
   ) {
 
@@ -11093,7 +11082,7 @@ function drawHasActiveDigitalCard(
   // já liberados em 2026
 
   if (
-    SYSTEM_YEAR === 2026 &&
+    CLOCK_YEAR === 2026 &&
     user.idReleased === true
   ) {
 
@@ -25935,7 +25924,7 @@ async function init() {
     {};
 
 
-  core = {
+  core = window.DHNDSeasons.scopeCore({
 
     users:
       objValues(
@@ -25956,7 +25945,7 @@ async function init() {
       c.config ||
       {}
 
-  };
+  }, SYSTEM_YEAR, DB_KEY);
 
 
   club =
@@ -26065,7 +26054,7 @@ async function init() {
           {};
 
 
-        core = {
+        core = window.DHNDSeasons.scopeCore({
 
           users:
             objValues(
@@ -26086,7 +26075,7 @@ async function init() {
             c.config ||
             {}
 
-        };
+        }, SYSTEM_YEAR, DB_KEY);
 
 
         const fresh =

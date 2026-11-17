@@ -11,11 +11,11 @@ const firebaseConfig = {
     appId: "1:817616563956:web:21dbbbcbb69e0cae10f8a1"
 };
 var database = null; var storage = null; var auth = null;
-const SYSTEM_YEAR = new Date().getFullYear();
-let defaultKey = 'dhpe_v25_final_stable_fix';
-if (SYSTEM_YEAR === 2027) defaultKey = 'dhpe_2027_active';
-if (SYSTEM_YEAR >= 2028) defaultKey = `dhpe_${SYSTEM_YEAR}_active`;
-let DB_KEY = localStorage.getItem('dhpe_active_season') || defaultKey;
+const CLOCK_YEAR = new Date().getFullYear();
+const SEASON_CONTEXT = window.DHNDSeasons.context(localStorage, CLOCK_YEAR);
+const SYSTEM_YEAR = SEASON_CONTEXT.year;
+const defaultKey = SEASON_CONTEXT.root;
+let DB_KEY = SEASON_CONTEXT.root;
 
 const SESS_KEY = 'dhpe_sess_v25';
 const LAST_TAB_KEY = 'dhpe_last_tab_v25';
@@ -32,6 +32,18 @@ const DEFAULT_CATS = [
 ];
 const DEFAULT_DB = { users: [], events: [], tempos: [], ranking: [], notifications: [], auditLog: [], x1_duels: [], config: { phone: '', rerunPass: 'admin123', allowAllIDs: false, categories: DEFAULT_CATS } };
 var db = DEFAULT_DB;
+
+function getSeasonEvents() {
+    return (db.events || []).filter(event => window.DHNDSeasons.inYear(event, SYSTEM_YEAR, DB_KEY));
+}
+function getSeasonTimes() {
+    const ids = new Set(getSeasonEvents().map(event => String(event.id)));
+    return (db.tempos || []).filter(time => time && ids.has(String(time.evtId)));
+}
+function getEventYear(event) {
+    return window.DHNDSeasons.eventYear(event, DB_KEY);
+}
+
 
 let currentTab = 'calendar'; let loggedUser = null; let currentAdmSection = null;
 let currentPayId = null;
@@ -504,49 +516,18 @@ function inscricoesEstaoEncerradas(evt) {
 // d = "21/22", m = "OUT"
 // resultado = 22/10 do ano atual às 23:59:59.
 function getEventoEndDate(evt) {
-
     if (!evt || !evt.d || !evt.m) return null;
-
-    const meses = {
-        JAN: 0,
-        FEV: 1,
-        MAR: 2,
-        ABR: 3,
-        MAI: 4,
-        JUN: 5,
-        JUL: 6,
-        AGO: 7,
-        SET: 8,
-        OUT: 9,
-        NOV: 10,
-        DEZ: 11
-    };
-
-    const mes = meses[String(evt.m).toUpperCase()];
-
-    if (mes === undefined) return null;
-
-    const partes =
-        String(evt.d)
-            .split("/")
-            .map(v => parseInt(v, 10))
-            .filter(v => !isNaN(v));
-
-    if (!partes.length) return null;
-
-    // Usa o último dia.
-    // "21/22" => 22
-    const ultimoDia = partes[partes.length - 1];
-
-    return new Date(
-        SYSTEM_YEAR,
-        mes,
-        ultimoDia,
-        23,
-        59,
-        59,
-        999
-    );
+    const months = {JAN:0, FEV:1, MAR:2, ABR:3, MAI:4, JUN:5, JUL:6, AGO:7, SET:8, OUT:9, NOV:10, DEZ:11};
+    const month = months[String(evt.m).trim().toUpperCase()];
+    if (month === undefined || !/^\d{1,2}(?:\/\d{1,2})*$/.test(String(evt.d).trim())) return null;
+    const days = String(evt.d).trim().split('/').map(Number);
+    const year = getEventYear(evt);
+    if (!Number.isInteger(year) || year < 2000 || year > 2100 || days.some(day => day < 1 || day > 31)) return null;
+    for (const day of days) {
+        const date = new Date(year, month, day, 23, 59, 59, 999);
+        if (date.getFullYear() !== year || date.getMonth() !== month || date.getDate() !== day) return null;
+    }
+    return new Date(year, month, days[days.length - 1], 23, 59, 59, 999);
 }
 
 
@@ -1221,13 +1202,18 @@ document.addEventListener("DOMContentLoaded", function() {
     if(document.getElementById('lbl-cad-season')) document.getElementById('lbl-cad-season').innerText = SYSTEM_YEAR;
     
     const selSeason = document.getElementById('season-selector');
-    if(selSeason) {
-        let html = '';
-        if (SYSTEM_YEAR <= 2026) { html += `<option value="dhpe_v25_final_stable_fix">TEMP. ATUAL (2026)</option><option value="dhpe_2025_archive">HISTÓRICO 2025</option>`; } 
-        else if (SYSTEM_YEAR === 2027) { html += `<option value="dhpe_2027_active">TEMP. ATUAL (2027)</option><option value="dhpe_2026_archive">HISTÓRICO 2026</option><option value="dhpe_2025_archive">HISTÓRICO 2025</option>`; } 
-        else { html += `<option value="dhpe_${SYSTEM_YEAR}_active">TEMP. ATUAL (${SYSTEM_YEAR})</option><option value="dhpe_${SYSTEM_YEAR - 1}_archive">HISTÓRICO ${SYSTEM_YEAR - 1}</option><option value="dhpe_2026_archive">HISTÓRICO 2026</option>`; }
-        selSeason.innerHTML = html;
-        if(selSeason.querySelector(`option[value="${DB_KEY}"]`)) { selSeason.value = DB_KEY; } else { selSeason.value = defaultKey; localStorage.setItem('dhpe_active_season', defaultKey); DB_KEY = defaultKey; }
+    if (selSeason) {
+        const availableYear = Math.max(CLOCK_YEAR, 2027);
+        let options = '';
+        for (let year = availableYear; year >= 2026; year--) {
+            options += `<option value="year:${year}">TEMPORADA ${year}</option>`;
+        }
+        options += '<option value="dhpe_2025_archive">HISTÓRICO 2025</option>';
+        if (DB_KEY.includes('archive') && !options.includes(`value="${DB_KEY}"`)) {
+            options += `<option value="${DB_KEY}">HISTÓRICO ${SYSTEM_YEAR}</option>`;
+        }
+        selSeason.innerHTML = options;
+        selSeason.value = DB_KEY.includes('archive') ? DB_KEY : 'year:' + SYSTEM_YEAR;
     }
     if(DB_KEY.includes('archive')) { document.body.classList.add('archive-mode'); const badge = document.getElementById('archive-badge-display'); if(badge) badge.style.display = 'block'; }
     
@@ -1235,6 +1221,8 @@ document.addEventListener("DOMContentLoaded", function() {
     uiElementsToSave.forEach(id => { const el = document.getElementById(id); if(el) { el.addEventListener('change', () => localStorage.setItem('ui_'+id, el.value)); if(el.tagName === 'INPUT') el.addEventListener('input', () => localStorage.setItem('ui_'+id, el.value)); } });
     uiElementsToSave.forEach(id => { const el = document.getElementById(id); const val = localStorage.getItem('ui_'+id); if(el && val !== null) el.value = val; });
     currentFilterStatus = localStorage.getItem('ui_fin-status') || 'ALL'; setupAutoSave();
+    const eventYearField = document.getElementById('adm-evt-year');
+    if (eventYearField && !eventYearField.value) eventYearField.value = String(SYSTEM_YEAR);
     
     let savedSession = localStorage.getItem(SESS_KEY) || sessionStorage.getItem(SESS_KEY);
     if(savedSession) { 
@@ -2120,7 +2108,7 @@ if(counter) counter.innerText = `${index + 1} / ${currentGalleryList.length}`; o
 window.navGallery = function(direction) { let newIndex = currentGalleryIndex + direction;
 if(newIndex < 0) newIndex = currentGalleryList.length - 1; if(newIndex >= currentGalleryList.length) newIndex = 0; openGalleryViewer(newIndex); };
 window.abrirTicket = function(evtId) { const e = db.events.find(x => String(x.id) === String(evtId)); if(!e || !loggedUser) return; document.getElementById('share-event-name').innerText = e.t;
-document.getElementById('share-event-details').innerText = `${e.d} | ${e.city}`; document.getElementById('share-piloto-name').innerText = loggedUser.nome; document.getElementById('share-piloto-details').innerText = `${loggedUser.cat} • ${loggedUser.city}`; document.getElementById('ticket-year-display').innerText = SYSTEM_YEAR; openModal('modal-share'); };
+document.getElementById('share-event-details').innerText = `${e.d} | ${e.city}`; document.getElementById('share-piloto-name').innerText = loggedUser.nome; document.getElementById('share-piloto-details').innerText = `${loggedUser.cat} • ${loggedUser.city}`; document.getElementById('ticket-year-display').innerText = getEventYear(e); openModal('modal-share'); };
 window.verOrdemLargada = function() {
     if (!loggedUser) return toast("Faça login", "error");
 
@@ -3141,7 +3129,7 @@ window.obterEventoModoCorrida = function() {
         if (insc.status !== 'CONFIRMADO' && insc.status !== 'ISENTO') return;
 
         const evt = db.events.find(e => String(e.id) === String(insc.id));
-        if (!evt || evt.status === 'CANCELLED') return;
+        if (!evt || !window.DHNDSeasons.inYear(evt, SYSTEM_YEAR, DB_KEY) || evt.status === 'CANCELLED') return;
         if (evt.startListPublished !== true) return;
 
         const fimEvento = getEventoEndDate(evt);
@@ -3480,8 +3468,8 @@ window.populatePublicFilters = function(tab) {
         }
         
         let evtHtml = tab === 'ranking' ? '<option value="ALL">GERAL (SOMA)</option>' : '<option value="ALL">TODAS AS ETAPAS</option>';
-        if (db.events && db.events.length > 0) {
-            db.events.forEach(e => {
+        if (getSeasonEvents().length > 0) {
+            getSeasonEvents().forEach(e => {
                 if (e.status !== 'CANCELLED' && (tab !== 'ranking' || window.DHNDScoring.isScoringEvent(e))) evtHtml += `<option value="${e.id}">${e.t}</option>`;
             });
         }
@@ -3562,12 +3550,15 @@ function renderContent(t) {
     
     if(t === 'calendar') { 
         document.getElementById('lbl-cal-year').innerText = SYSTEM_YEAR;
+        const upcoming = document.getElementById('next-season-link');
+        if (upcoming) upcoming.style.display = SYSTEM_YEAR < 2027 && !DB_KEY.includes('archive') ? 'block' : 'none';
         window.renderModoCorridaEntrada();
         const hD = document.getElementById('calendar-highlight'); const oD = document.getElementById('calendar-others'); const pD = document.getElementById('calendar-past-bar');
-        if(!db.events || db.events.length === 0) { hD.innerHTML = '<div style="padding:20px;text-align:center">Nenhum evento cadastrado.</div>'; oD.innerHTML = ''; pD.style.display = 'none'; return; } 
+        const seasonEvents = getSeasonEvents();
+        if(!seasonEvents.length) { hD.innerHTML = '<div style="padding:20px;text-align:center">Nenhum evento cadastrado.</div>'; oD.innerHTML = ''; pD.style.display = 'none'; return; } 
         
-        const activeEvents = db.events.filter(e => e.status === 'OPEN');
-        const inactiveEvents = db.events.filter(e => e.status === 'CLOSED' || e.status === 'CANCELLED' || e.status === 'POSTPONED');
+        const activeEvents = seasonEvents.filter(e => e.status === 'OPEN');
+        const inactiveEvents = seasonEvents.filter(e => e.status === 'CLOSED' || e.status === 'CANCELLED' || e.status === 'POSTPONED');
         const monthMap = { "JAN":1, "FEV":2, "MAR":3, "ABR":4, "MAI":5, "JUN":6, "JUL":7, "AGO":8, "SET":9, "OUT":10, "NOV":11, "DEZ":12 };
         activeEvents.sort((a,b) => { const mA = monthMap[a.m] || 99; const mB = monthMap[b.m] || 99; if (mA !== mB) return mA - mB; const dayA = parseInt((a.d || "0").split('/')[0], 10) || 0; const dayB = parseInt((b.d || "0").split('/')[0], 10) || 0; return dayA - dayB; });
         if(inactiveEvents.length > 0) { 
@@ -3710,7 +3701,7 @@ let imgHtml = e.img ? `<img src="${e.img}" class="evt-img-standard">` : `<div cl
                 }
             }
             
-            html += `<span style="font-size:12px; color:#666">${e.d} ${e.m} | ${e.city}</span>${qualifyInfo}<div style="display:flex; justify-content:space-between; align-items:center; margin-top:5px;"><div class="event-price">${priceHtml}</div><div style="font-size:9px; color:#d50000; font-weight:bold;">INSCRIÇÕES ENCERRAM: ${limitDate}</div></div><div style="display:flex; flex-direction:column; gap:5px; margin-top:10px; width:100%;">${mainBtnHtml}${extraBtnHtml}${viewBtnHtml}</div></div>`;
+            html += `<span style="font-size:12px; color:#666">${e.d} ${e.m} / ${getEventYear(e)} | ${e.city}</span>${qualifyInfo}<div style="display:flex; justify-content:space-between; align-items:center; margin-top:5px;"><div class="event-price">${priceHtml}</div><div style="font-size:9px; color:#d50000; font-weight:bold;">INSCRIÇÕES ENCERRAM: ${limitDate}</div></div><div style="display:flex; flex-direction:column; gap:5px; margin-top:10px; width:100%;">${mainBtnHtml}${extraBtnHtml}${viewBtnHtml}</div></div>`;
             return html;
         };
         const h = activeEvents.length > 0 ? activeEvents[0] : null;
@@ -3723,7 +3714,7 @@ let imgHtml = e.img ? `<img src="${e.img}" class="evt-img-standard">` : `<div cl
              populatePublicFilters(t);
              const fEvt = document.getElementById('filter-evt-'+t).value;
              const fCat = document.getElementById('filter-cat-'+t).value; const fType = document.getElementById('filter-type-tempos').value; const fRegion = document.getElementById('filter-region-tempos').value;
-             let allTimes = db.tempos || [];
+             let allTimes = getSeasonTimes();
              if (fEvt && fEvt !== 'ALL') allTimes = allTimes.filter(i => String(i.evtId) === String(fEvt));
              if (fCat && fCat !== 'ALL' && fCat !== 'ALL_SEP') allTimes = allTimes.filter(i => window.normalizeCatName(i.cat) === window.normalizeCatName(fCat));
              if (fRegion === 'PE') allTimes = allTimes.filter(t => { const u = db.users.find(user => user.cpf === t.cpf); return u && (u.uf === 'PE' || !u.uf || u.filiadoPE === true); });
@@ -3735,7 +3726,7 @@ let imgHtml = e.img ? `<img src="${e.img}" class="evt-img-standard">` : `<div cl
 // ==========================================================
 if (fEvt === 'ALL') {
 
-    const eventosOficiais = (db.events || []).filter(e =>
+    const eventosOficiais = getSeasonEvents().filter(e =>
         e &&
         e.type !== 'NON_OFFICIAL' &&
         e.status !== 'CANCELLED' &&
@@ -4917,7 +4908,7 @@ if (fEvt === 'ALL') {
              let maxRemainingPts = 0;
              if (fEvt === 'ALL') {
                  // Soma todos os pontos das etapas que ainda não acabaram
-                 db.events.forEach(e => {
+                 getSeasonEvents().forEach(e => {
                      if (window.DHNDScoring.isScoringEvent(e) && (e.status === 'OPEN' || e.status === 'POSTPONED')) {
                          let p1 = (e.points && e.points.length > 0) ? parseInt(e.points[0], 10) || 0 : 0;
                          let q1 = (e.hasQualify && e.qPoints && e.qPoints.length > 0) ? parseInt(e.qPoints[0], 10) || 0 : 0;
@@ -5051,7 +5042,7 @@ window.openAdmSection = function(sec) {
     if(sec === 'results') { 
         const sel = document.getElementById('adm-res-evt');
         let html = '<option value="">SELECIONE EVENTO...</option>'; 
-        db.events.forEach(e => { if(!isSuperAdmin(loggedUser) && (!loggedUser.allowedEvts || !loggedUser.allowedEvts.includes(String(e.id)))) return; html += `<option value="${e.id}">${e.t}</option>`; });
+        getSeasonEvents().forEach(e => { if(!isSuperAdmin(loggedUser) && (!loggedUser.allowedEvts || !loggedUser.allowedEvts.includes(String(e.id)))) return; html += `<option value="${e.id}">${e.t}</option>`; });
         sel.innerHTML = html; const savedEvt = localStorage.getItem('ui_adm-res-evt'); if(savedEvt && sel.querySelector(`option[value="${savedEvt}"]`)) sel.value = savedEvt;
         // A construção do dropdown de categorias agora acontece inteiramente no renderAdmResults!
         renderAdmResults();
@@ -5070,7 +5061,7 @@ window.openAdmSection = function(sec) {
         }
         const sel = document.getElementById('fin-evt-select'); let html = isSuperAdmin(loggedUser) ?
         '<option value="ALL">GERAL (TODOS EVENTOS)</option>' : '<option value="">SELECIONE SEU EVENTO...</option>';
-        db.events.forEach(e => { if(!isSuperAdmin(loggedUser) && (!loggedUser.allowedEvts || !loggedUser.allowedEvts.includes(String(e.id)))) return; html += `<option value="${e.id}">${e.t}</option>`; });
+        getSeasonEvents().forEach(e => { if(!isSuperAdmin(loggedUser) && (!loggedUser.allowedEvts || !loggedUser.allowedEvts.includes(String(e.id)))) return; html += `<option value="${e.id}">${e.t}</option>`; });
         sel.innerHTML = html; const savedFin = localStorage.getItem('ui_fin-evt-select'); if(savedFin && sel.querySelector(`option[value="${savedFin}"]`)) sel.value = savedFin;
         renderInscriptions();
     }
@@ -5220,9 +5211,22 @@ function filterPilots(ctx, force) {
 // FUNÇÃO PARA MUDAR A TEMPORADA
 // ==========================================
 window.changeSeason = function(newSeasonKey) {
-    localStorage.setItem('dhpe_active_season', newSeasonKey);
-    toast("CARREGANDO TEMPORADA...");
-    setTimeout(() => { window.location.reload(true); }, 500);
+    const selected = /^year:(\d{4})$/.exec(String(newSeasonKey));
+    if (selected) {
+        const year = Number(selected[1]);
+        if (year < 2026 || year > Math.max(CLOCK_YEAR, 2027)) return;
+        const liveRoot = DB_KEY.includes('archive')
+            ? (localStorage.getItem('dhpe_live_data_root') || 'dhpe_v25_final_stable_fix') : DB_KEY;
+        localStorage.setItem('dhpe_active_season', liveRoot);
+        localStorage.setItem('dhpe_live_data_root', liveRoot);
+        localStorage.setItem('dhpe_selected_year', String(year));
+        localStorage.setItem('autosave_adm-evt-year', String(year));
+    } else if (/^dhpe_\d{4}_archive$/.test(String(newSeasonKey))) {
+        if (!DB_KEY.includes('archive')) localStorage.setItem('dhpe_live_data_root', DB_KEY);
+        localStorage.setItem('dhpe_active_season', newSeasonKey);
+    } else return;
+    toast('CARREGANDO TEMPORADA...');
+    setTimeout(() => { window.location.reload(); }, 200);
 };
 
 // ==========================================
@@ -5623,7 +5627,7 @@ window.copiarPontosDe = function() {
 
 
 function renderAdmEvents() { const list = document.getElementById('adm-list-events'); if(!list) return; if(!db.events || db.events.length === 0) { list.innerHTML = '<div style="color:#666; padding:10px">Nenhum evento.</div>';
-return; } list.innerHTML = db.events.map(e => `<div class="adm-card" style="display:flex; justify-content:space-between; align-items:center;"><div><b>${e.t}</b> (${e.type})<br><span style="font-size:10px; color:#666">${e.d} | ${e.city} | ${e.status}</span></div><div style="display:flex; gap:5px;"><button class="btn-mini-adm" style="background:#3b82f6" onclick="editEvent(${e.id})"><i class="fas fa-pen"></i></button><button class="btn-mini-adm" style="background:#ef4444" onclick="delEvent(${e.id})"><i class="fas fa-trash"></i></button></div></div>`).join('');
+return; } list.innerHTML = db.events.map(e => `<div class="adm-card" style="display:flex; justify-content:space-between; align-items:center;"><div><b>${e.t}</b> (${e.type})<br><span style="font-size:10px; color:#666">${e.d} ${e.m || ''} / ${getEventYear(e)} | ${e.city} | ${e.status}</span></div><div style="display:flex; gap:5px;"><button class="btn-mini-adm" style="background:#3b82f6" onclick="editEvent(${e.id})"><i class="fas fa-pen"></i></button><button class="btn-mini-adm" style="background:#ef4444" onclick="delEvent(${e.id})"><i class="fas fa-trash"></i></button></div></div>`).join('');
 }
 
 window.toggleQualifyInputs = function() {
@@ -5643,6 +5647,8 @@ window.toggleQualifyInputs = function() {
 };
 function clearEventForm() { 
     document.querySelectorAll('#adm-sec-events input').forEach(i => { if(i.type !== 'checkbox') { i.value = ''; localStorage.removeItem('autosave_' + i.id); } else { i.checked = false; localStorage.removeItem('autosave_' + i.id); } });
+    const yearField = document.getElementById('adm-evt-year');
+    if (yearField) yearField.value = String(SYSTEM_YEAR);
     const scoringChoice = document.getElementById('adm-evt-points-enabled');
     if (scoringChoice) scoringChoice.value = 'false';
     localStorage.removeItem('autosave_adm-evt-points-enabled');
@@ -5675,6 +5681,11 @@ window.addEvent = function() {
     if(!t || !d) { btn.innerText = originalText;
     return toast("NOME E DATA OBRIGATÓRIOS", "error"); } 
     
+    const year = Number(getVal('adm-evt-year') || SYSTEM_YEAR);
+    if (!Number.isInteger(year) || year < 2000 || year > 2100) {
+        btn.innerText = originalText;
+        return toast('INFORME O ANO DA ETAPA COM QUATRO DÍGITOS.', 'error');
+    }
     const evtType = getVal('adm-evt-type') || 'PE';
     let extraVals = {};
     let newPoints = [], newQPoints = [];
@@ -5719,7 +5730,7 @@ window.addEvent = function() {
 
     const evtObj = { 
         id: getVal('adm-evt-id-edit') ? parseInt(getVal('adm-evt-id-edit'), 10) : Date.now(), 
-        t: t, d: d, m: getVal('adm-evt-month'), type: evtType, city: getVal('adm-evt-c').toUpperCase(), 
+        t: t, d: d, m: getVal('adm-evt-month'), year: year, type: evtType, city: getVal('adm-evt-c').toUpperCase(), 
         val: geralVal, pix: getVal('adm-evt-pix'), status: getVal('adm-evt-status') || 'OPEN', 
         points: newPoints, qPoints: newQPoints, pointsEnabled: pointsEnabled, closeDate: getVal('adm-evt-close-date'), 
         startListDate: getVal('adm-evt-startlist-date'), open: true, img: null, gallery: [], 
@@ -5728,6 +5739,10 @@ window.addEvent = function() {
         qTime: hasQualify ? document.getElementById('adm-evt-q-time').value : null, 
         extraVals: extraVals 
     };
+    if (!getEventoEndDate(evtObj)) {
+        btn.innerText = originalText;
+        return toast('CONFIRA O ANO, O MÊS E OS DIAS DA ETAPA.', 'error');
+    }
    if (getVal('adm-evt-id-edit')) {
 
     const oldIdx =
@@ -5855,6 +5870,7 @@ window.editEvent = function(id) {
     if(e) { 
         const setAndSave = (elId, val) => { const el = document.getElementById(elId);
         if(el) { el.value = val; localStorage.setItem('autosave_' + elId, val); } };
+        setAndSave('adm-evt-year', getEventYear(e));
         setAndSave('adm-evt-id-edit', e.id); setAndSave('adm-evt-t', e.t); setAndSave('adm-evt-d', e.d); setAndSave('adm-evt-c', e.city);
         setAndSave('adm-evt-v', e.val || ''); setAndSave('adm-evt-pix', e.pix || ''); setAndSave('adm-evt-status', e.status || 'OPEN'); setAndSave('adm-evt-close-date', e.closeDate || ''); setAndSave('adm-evt-startlist-date', e.startListDate || '');
         setAndSave('adm-evt-wpp', e.wpp || ''); 
@@ -6019,7 +6035,7 @@ window.compartilListaInscritos = function() {
 
 window.abrirModalExportCBC = function() {
     const sel = document.getElementById('export-cbc-evt'); let html = '<option value="">SELECIONE O EVENTO...</option>';
-    db.events.forEach(e => { html += `<option value="${e.id}">${e.t}</option>`; }); sel.innerHTML = html; openModal('modal-export-cbc');
+    getSeasonEvents().forEach(e => { html += `<option value="${e.id}">${e.t}</option>`; }); sel.innerHTML = html; openModal('modal-export-cbc');
 };
 window.gerarExcelCBC = function() {
     const evtId = document.getElementById('export-cbc-evt').value;
@@ -7698,7 +7714,7 @@ function recalcRanking(filterEvtId = 'ALL', filterRegion = 'ALL') {
     let pointsMap = {}; 
     if(!db.events || !db.tempos) { db.ranking = []; return; } 
     
-    db.events.forEach(evt => { 
+    getSeasonEvents().forEach(evt => { 
         if(filterEvtId !== 'ALL' && String(evt.id) !== String(filterEvtId)) return; 
         if(evt.status === 'CANCELLED' || !window.DHNDScoring.isScoringEvent(evt)) return; 
         
@@ -7941,11 +7957,12 @@ window.renderInscriptions = function() {
     let totalPagos = 0;
     let totalIsentos = 0; // CONTADOR DE ISENTOS
     const isGeral = (evtId === 'ALL');
+    const seasonEventIds = new Set(getSeasonEvents().map(event => String(event.id)));
     
     db.users.forEach(u => {
         if (u.inscricoes && u.inscricoes.length > 0) {
             u.inscricoes.forEach(i => {
-                if (isGeral || String(i.id) === String(evtId)) {
+                if (seasonEventIds.has(String(i.id)) && (isGeral || String(i.id) === String(evtId))) {
                     let evtObj = db.events.find(e => String(e.id) === String(i.id));
                     if(evtObj) {
                         let catNome = window.normalizeCatName(i.extraCat || u.cat);

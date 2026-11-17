@@ -148,6 +148,7 @@
         
         <div id="cont-calendar" class="c-sec active" style="overflow-y:auto; height:100vh; padding-bottom:120px;">
             <div class="section-header-area"><div class="section-title">CALENDÁRIO <span id="lbl-cal-year"></span></div></div>
+            <button id="next-season-link" class="btn" style="display:none; margin:0 12px 10px; width:calc(100% - 24px);" onclick="changeSeason('year:2027')">TEMPORADA 2027 · VER CALENDÁRIO E INSCRIÇÕES</button>
             <div id="race-mode-entry" style="display:none; padding:0 12px 10px 12px;"></div>
             <div id="calendar-past-bar" class="past-events-bar" style="display:none"></div>
             <div class="calendar-wrapper">
@@ -429,6 +430,8 @@
                             </select>
                             <p style="font-size:11px; margin:6px 0 0; color:#475569;">As etapas que pontuam entram na soma da temporada. Use uma tabela já cadastrada ou preencha os pontos abaixo.</p>
                         </div>
+                        <label for="adm-evt-year" style="font-size:10px; display:block; margin-top:8px;">ANO DA ETAPA</label>
+                        <input id="adm-evt-year" type="number" min="2000" max="2100" step="1" placeholder="Ex.: 2027" class="input-field" style="padding:8px">
                         <input id="adm-evt-d" placeholder="DIAS (Ex: 21/22 ou 21)" class="input-field" style="margin-top:5px; padding:8px" oninput="mascaraDias(this)" maxlength="5">
                         <input id="adm-evt-c" placeholder="CIDADE" class="uppercase-input input-field" style="margin-top:5px; padding:8px">
             
@@ -1613,8 +1616,9 @@ refreshListsOnly();
 <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-storage-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-messaging-compat.js"></script>
 
+<script src="season-policy.js?v=1"></script>
 <script src="ranking-policy.js?v=1"></script>
-<script src="script.js?v=164"></script>
+<script src="script.js?v=165"></script>
 
 </body>
 </html>
