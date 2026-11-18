@@ -1,0 +1,135 @@
+#direct-timing-dialog {
+    box-sizing: border-box;
+    width: min(68rem, calc(100% - 2rem));
+    max-width: none;
+    max-height: calc(100% - 2rem);
+    max-height: calc(100dvh - 2rem);
+    margin: auto;
+    padding: 0;
+    overflow: hidden;
+    border: 1px solid #ccd8e8;
+    border-top: 5px solid var(--pe-blue, #0038a8);
+    border-radius: 14px;
+    background: #fff;
+    color: #17273e;
+    box-shadow: 0 20px 80px #11244155;
+}
+#direct-timing-dialog[open] { display: flex; flex-direction: column; }
+#direct-timing-dialog [hidden] { display: none !important; }
+#direct-timing-dialog::backdrop { background: #0b1d3db0; }
+.direct-timing-header {
+    display: flex;
+    flex: none;
+    gap: 16px;
+    align-items: flex-start;
+    justify-content: space-between;
+    padding: 18px 20px 12px;
+}
+.direct-timing-header h2 { margin: 0; color: var(--pe-blue, #0038a8); font-size: 1.45rem; }
+#direct-timing-event { margin: 4px 0 0; font-size: 1rem; font-weight: 700; overflow-wrap: anywhere; }
+#direct-timing-run { margin: 3px 0 0; color: #13633a; font-size: .875rem; font-weight: 700; }
+.direct-timing-toolbar {
+    display: flex;
+    flex: none;
+    align-items: end;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 0 20px;
+}
+.direct-timing-toolbar label { display: grid; flex: 1; gap: 5px; min-width: 0; max-width: 24rem; color: #33445c; font-size: .875rem; font-weight: 600; }
+#direct-timing-dialog input {
+    box-sizing: border-box;
+    display: block;
+    width: 100%;
+    min-width: 0;
+    min-height: 42px;
+    padding: 8px 10px;
+    border: 1px solid #bacbdf;
+    border-radius: 7px;
+    background: #fff;
+    color: #17273e;
+    font-size: 1rem;
+}
+#direct-timing-rows input { font-variant-numeric: tabular-nums; }
+#direct-timing-dialog button {
+    min-height: 38px;
+    padding: 7px 11px;
+    border: 1px solid #bacbdf;
+    border-radius: 7px;
+    background: #fff;
+    color: var(--pe-blue, #0038a8);
+    font: inherit;
+    font-size: .875rem;
+    font-weight: 700;
+    cursor: pointer;
+}
+#direct-timing-download { flex: none; }
+#direct-timing-dialog button:hover:not(:disabled) { background: #eef4ff; }
+#direct-timing-rows button:not(:disabled) { margin-top: 4px; border-color: #087143; background: #087143; color: #fff; }
+#direct-timing-rows button:hover:not(:disabled) { background: #095b39; }
+#direct-timing-dialog button:disabled { cursor: default; opacity: .55; }
+#direct-timing-dialog :focus-visible { outline: 3px solid #2563eb; outline-offset: 2px; }
+#direct-timing-help, #direct-timing-status { padding: 0 20px; font-size: .8125rem; line-height: 1.35; }
+#direct-timing-help { margin: 10px 0 0; color: #435775; }
+#direct-timing-status { margin: 6px 0 10px; color: #33445c; font-weight: 700; }
+#direct-timing-status[data-state="success"] { color: #13633a; }
+#direct-timing-status[data-state="error"] { color: #a91c2e; }
+.direct-timing-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; border-top: 1px solid #dde5ef; }
+.direct-timing-table { width: 100%; border-collapse: collapse; text-align: left; }
+.direct-timing-table th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    padding: 10px;
+    background: #edf3fb;
+    color: #183969;
+    font-size: .8125rem;
+    white-space: nowrap;
+}
+.direct-timing-table td { padding: 8px 10px; border-bottom: 1px solid #e3e9f2; font-size: .875rem; }
+.direct-timing-table :is(th, td):first-child { padding-left: 20px; }
+.direct-timing-table :is(th, td):last-child { padding-right: 20px; }
+.direct-timing-table td:nth-child(2) { min-width: 11rem; overflow-wrap: anywhere; }
+.direct-timing-table td:nth-child(3) { min-width: 7rem; }
+.direct-timing-table td:nth-child(4), .direct-timing-table td:nth-child(5) { width: 10rem; min-width: 8.5rem; }
+.direct-timing-result { color: var(--pe-blue, #0038a8); font-size: 1rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+.direct-timing-row-note:not(:empty) { display: block; margin-top: 2px; color: #435775; font-size: .75rem; }
+#direct-timing-empty { margin: 20px; text-align: center; color: #435775; }
+
+@media (max-width: 720px) {
+    #direct-timing-dialog {
+        width: calc(100% - 1rem);
+        max-height: calc(100% - 1rem);
+        max-height: calc(100dvh - 1rem);
+        border-radius: 10px;
+    }
+    .direct-timing-header { padding: 12px 12px 8px; }
+    .direct-timing-header h2 { font-size: 1.25rem; }
+    .direct-timing-toolbar, #direct-timing-help, #direct-timing-status { padding-inline: 12px; }
+    .direct-timing-scroll { background: #f4f7fb; }
+    .direct-timing-table, .direct-timing-table tbody { display: block; }
+    .direct-timing-table thead { position: absolute; width: 1px; height: 1px; clip-path: inset(50%); overflow: hidden; white-space: nowrap; }
+    .direct-timing-table tbody { padding: 8px; }
+    .direct-timing-table tbody tr {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px 10px;
+        margin-bottom: 8px;
+        padding: 10px;
+        border: 1px solid #d6e0ed;
+        border-radius: 9px;
+        background: #fff;
+    }
+    .direct-timing-table tbody td[data-label] { width: auto; min-width: 0; padding: 0; border: 0; }
+    .direct-timing-table td[data-label]::before {
+        content: attr(data-label);
+        display: block;
+        margin-bottom: 3px;
+        color: #435775;
+        font-size: .75rem;
+        font-weight: 700;
+    }
+    .direct-timing-table td:nth-child(1) { grid-column: 2; grid-row: 1; text-align: right; }
+    .direct-timing-table td:nth-child(2) { grid-column: 1; grid-row: 1; font-weight: 700; }
+    .direct-timing-table td:nth-child(3), .direct-timing-table td:nth-child(6) { grid-column: 1 / -1; }
+}

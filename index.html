@@ -33,7 +33,8 @@
     
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     
-    <link rel="stylesheet" href="style.css?v=160"> 
+    <link rel="stylesheet" href="style.css?v=160">
+    <link rel="stylesheet" href="direct-timing.css?v=2"> 
 </head>
 <body>
 
@@ -580,9 +581,9 @@
                                     <i class="fas fa-upload"></i> IMPORTAR
                                 </button>
 
-                                <!-- BOTÃO DE GERAR EXCEL LARGADA -->
-                                <button class="btn-live-launch" title="Baixar largada com CONFIG pronta para Google Sheets" style="background:#107c41; color:white; padding:6px 10px; border:none; border-radius:4px; font-weight:bold; font-size:10px; cursor:pointer; display:flex; align-items:center; gap:5px;" onclick="window.gerarExcelLargada()">
-                                    <i class="fas fa-file-excel"></i> LARGADA
+                                <button id="btn-open-direct-timing" type="button" class="btn-live-launch" title="Abrir a cronometragem da etapa e volta selecionadas" style="background:#107c41; color:white; padding:6px 10px; border:none; border-radius:4px; font-weight:bold; font-size:10px; cursor:pointer; display:flex; align-items:center; gap:5px;" onclick="window.DHNDDirectDesk.open()">
+                                    <i class="fas fa-stopwatch" aria-hidden="true"></i> LARGADA
+                                </button>
                                     <!-- PUBLICA / DESPUBLICA A ORDEM PARA OS ATLETAS -->
 <button
     id="btn-publish-start-list"
@@ -593,7 +594,6 @@
 >
     <i class="fas fa-bullhorn"></i> PUBLICAR ORDEM
 </button>
-                                </button>
                                 
                                 <button class="btn-live-launch" style="background:#ff9800; color:white; padding:6px 10px; border:none; border-radius:4px; font-weight:bold; font-size:10px; cursor:pointer;" onclick="imprimirOrdemLargadaGeral()"><i class="fas fa-print"></i> IMPRIMIR</button>
                                 
@@ -604,14 +604,9 @@
                         </div>
 
                         <details id="start-workbook-guide" style="font-size:11px; color:#334155; margin-top:10px; line-height:1.5;">
-                            <summary style="cursor:pointer; font-weight:bold;">LARGADA pronta: como iniciar no Google Sheets</summary>
-                            <ol style="padding-left:20px; margin:8px 0;">
-                                <li>Selecione o evento e o tipo de volta abaixo. Depois, clique em LARGADA.</li>
-                                <li>Abra a sua planilha de cronometragem que já envia resultados ao app.</li>
-                                <li>Use <b>Arquivo → Importar → Fazer upload</b>, escolha o arquivo baixado e selecione <b>Substituir planilha → Importar dados</b>.</li>
-                                <li>A aba CONFIG já terá o evento, a volta e a sincronização ativa. Abra a aba Largada e inicie a cronometragem como de costume.</li>
-                            </ol>
-                            <p style="margin:0;">A importação substitui as abas atuais. Para guardar a planilha da prova anterior, faça uma cópia antes. Use a planilha já conectada: abrir o arquivo como uma planilha nova não instala a integração.</p>
+                            <summary style="cursor:pointer; font-weight:bold;">Planilha de largada</summary>
+                            <button type="button" class="btn-mini-adm" style="background:#107c41; margin-top:8px;" onclick="window.gerarExcelLargada()"><i class="fas fa-download" aria-hidden="true"></i> BAIXAR PLANILHA</button>
+                            <p style="margin:6px 0 0;">Para usar o Google Planilhas, importe o arquivo na planilha de cronometragem já conectada e confira o evento e a volta na aba CONFIG. Faça uma cópia antes de substituir as abas antigas.</p>
                         </details>
                         <div style="display:flex; gap:5px; margin-top:10px;">
                              <select id="adm-res-evt" class="input-field" onchange="renderAdmResults()"><option value="">SELECIONE EVENTO...</option></select>
@@ -991,6 +986,42 @@
 </div>
 <!-- FIM MODAIS X1 -->
     
+<dialog id="direct-timing-dialog" aria-labelledby="direct-timing-title" aria-describedby="direct-timing-event direct-timing-run">
+    <header class="direct-timing-header">
+        <div>
+            <h2 id="direct-timing-title">Cronometragem</h2>
+            <h3 id="direct-timing-event"></h3>
+            <p id="direct-timing-run"></p>
+        </div>
+        <button type="button" id="direct-timing-close">Fechar</button>
+    </header>
+    <div class="direct-timing-toolbar">
+        <label for="direct-timing-search">
+            Buscar atleta
+            <input id="direct-timing-search" type="search" autocomplete="off" placeholder="Nome ou placa">
+        </label>
+        <button type="button" id="direct-timing-download">Baixar planilha</button>
+    </div>
+    <p id="direct-timing-help">Digite a hora com 6 ou 9 dígitos (HHMMSS ou HHMMSSmmm). Pressione Enter ou Tab após a chegada para calcular e publicar o tempo.</p>
+    <p id="direct-timing-status" role="status" aria-live="polite" aria-atomic="true"></p>
+    <div class="direct-timing-scroll">
+        <table class="direct-timing-table" aria-label="Largada e resultados">
+            <thead>
+                <tr>
+                    <th scope="col">Placa</th>
+                    <th scope="col">Atleta</th>
+                    <th scope="col">Categoria</th>
+                    <th scope="col">Hora de largada</th>
+                    <th scope="col">Hora de chegada</th>
+                    <th scope="col">Resultado</th>
+                </tr>
+            </thead>
+            <tbody id="direct-timing-rows"></tbody>
+        </table>
+        <p id="direct-timing-empty" hidden>Nenhum atleta encontrado.</p>
+    </div>
+</dialog>
+
 <template id="template-live-timing">
 <!DOCTYPE html>
 <html lang="pt-BR">
@@ -1650,7 +1681,8 @@ refreshListsOnly();
 <script src="maintenance.js?v=2"></script>
 <script src="maintenance-admin.js?v=1"></script>
 <script src="roster-policy.js?v=1"></script>
-<script src="script.js?v=171"></script>
+<script src="script.js?v=172"></script>
+<script src="direct-timing.js?v=1"></script>
 
 </body>
 </html>

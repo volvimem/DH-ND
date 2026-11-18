@@ -76,6 +76,7 @@ function mainMaintenanceChanged(state) {
         maintenanceAppOpened = false;
         if (activeDatabaseRef) { activeDatabaseRef.off('value'); activeDatabaseRef = null; }
         stopRosterSync();
+        window.DHNDDirectDesk?.close();
         if (saveTimeout) clearTimeout(saveTimeout);
         pendingSaves.clear();
         document.querySelectorAll('.modal-overlay').forEach(el => { el.style.display = 'none'; });
@@ -1071,6 +1072,7 @@ function updateSessionStorage() {
 
 function refreshCurrentView() {
     if (!maintenanceAllowsApp()) return;
+    window.DHNDDirectDesk?.refresh();
     let filter = 'ALL'; const filterEl = document.getElementById('filter-evt-ranking');
     if(filterEl) filter = filterEl.value; 
     
@@ -6699,8 +6701,8 @@ window.importarExcelTempos = function(event) {
 // ==========================================================
 // FUNÇÕES DE INTEGRAÇÃO EXCEL (GERAR LARGADA E IMPORTAR)
 // ==========================================================
-window.gerarExcelLargada = function() {
-    const evtId = document.getElementById('adm-res-evt').value;
+window.gerarExcelLargada = function(selection = null) {
+    const evtId = selection?.eventId ?? document.getElementById('adm-res-evt').value;
 
     if (!evtId) {
         return toast("Selecione um evento primeiro!", "error");
@@ -6717,10 +6719,7 @@ window.gerarExcelLargada = function() {
     // =====================================================
     // TIPO DE VOLTA SELECIONADO NO PAINEL
     // =====================================================
-    const runTypeSelecionado =
-        document.getElementById('adm-res-runtype')
-            ? document.getElementById('adm-res-runtype').value
-            : '1st';
+    const runTypeSelecionado = selection?.runType ?? (document.getElementById('adm-res-runtype')?.value || '1st');
 
     let runTypeDb = '1st';
     let runLabel = 'OFICIAL';
