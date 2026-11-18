@@ -71,7 +71,8 @@ function setup(source,options={}) {
   return {gate,remote,auth,nodes,textWrites,htmlWrites,requests,writes,changes,errors,calls,pendingWrites,heldRequests,holdNext,navigator:context.navigator,
     setProfile:value=>{currentProfile=value;},
     async emitAuth(user){auth.currentUser=user;for(const callback of [...authListeners])callback(user);await flush();},
-    async emitGlobal(name){events.get(name)?.();await flush();},
+    async emitGlobal(name,event={}){events.get(name)?.(event);await flush();},
+    async emitVisibility(value){document.visibilityState=value;events.get('document:visibilitychange')?.();await flush();},
     async emitSdk(key,value=null,error){const normalized=key.replace(/^\//,'');if(normalized==='.info/connected'&&!error)remote.sdkConnected=value;const list=sdkListeners.get(normalized)||[];for(const item of list)error?item.cancel?.(error):item.callback({val:()=>value});await flush();},
     async advance(ms){const target=clock+ms;let limit=0;while(true){const entries=[...timers.entries()].filter(([,t])=>t.due<=target).sort((a,b)=>a[1].due-b[1].due);if(!entries.length)break;if(++limit>100)throw Error('Timer loop');const [id,timer]=entries[0];clock=timer.due;timers.delete(id);if(timer.repeat)timers.set(id,{...timer,due:clock+timer.repeat});timer.fn();await flush();}clock=target;await flush();}
   };
@@ -200,6 +201,41 @@ async function runSuite(options={}) {
   });
   await test('a restored SDK connection confirms the permission again instead of reviving the old grant',async()=>{
     const h=await started({remote:{own:true}});assert.equal(h.gate.guard(),true);await h.emitSdk('.info/connected',false);h.remote.own=false;const before=h.requests.length;await h.emitSdk('.info/connected',true);assert.ok(h.requests.length>before);assert.equal(h.gate.guard(),false);
+  });
+  await test('an approved athlete returning from phone lock reopens after a fresh check while the SDK reconnects',async()=>{
+    const h=await started({remote:{own:true}});
+    await h.emitVisibility('hidden'); await h.emitSdk('.info/connected',false);
+    assert.equal(h.gate.guard(),false);
+    const before=h.requests.length;
+    await h.emitVisibility('visible');
+    assert.equal(h.gate.guard(),true);
+    assert.ok(h.requests.slice(before).some(request=>request.path.endsWith('/allowedCpfs/'+CPF+'.json')&&request.init.cache==='no-store'));
+    assert.equal(h.calls.login,0);
+  });
+  await test('a resumed athlete whose grant changed is denied while the SDK reconnects',async()=>{
+    const h=await started({remote:{own:true}});
+    await h.emitVisibility('hidden'); await h.emitSdk('.info/connected',false);
+    h.remote.own=false; await h.emitGlobal('pageshow',{persisted:true});
+    await h.emitVisibility('visible');
+    assert.equal(h.gate.guard(),false);
+    assert.equal(h.gate.state.admin,false);
+  });
+  await test('switching accounts during foreground recovery cannot unlock with the old grant',async()=>{
+    const h=await started({remote:{own:true}});
+    await h.emitVisibility('hidden'); await h.emitSdk('.info/connected',false);
+    h.holdNext.add('/'+ROOT+'/allowedCpfs/'+CPF+'.json');
+    await h.emitVisibility('visible'); assert.equal(h.heldRequests.length,1);
+    h.setProfile(profile({cpf:'00987654321',uid:'second-account'}));
+    await h.emitAuth(firebaseUser({uid:'second-account',email:'00987654321@dhpe.com.br'}));
+    h.heldRequests[0].resolve(); await flush();
+    assert.equal(h.gate.guard(),false);
+  });
+  await test('the SDK dropping just after wake does not strand an allowed athlete behind the gate',async()=>{
+    const h=await started({remote:{own:true}});
+    await h.emitVisibility('hidden'); await h.emitVisibility('visible');
+    await h.emitSdk('.info/connected',false);
+    assert.equal(h.gate.guard(),true);
+    assert.equal(h.calls.login,0);
   });
   await test('reconnecting requires a fresh permission and cannot revive an old allowance',async()=>{
     const h=await started({remote:{own:true}});assert.equal(h.gate.guard(),true);h.navigator.onLine=false;await h.emitGlobal('offline');h.remote.own=false;const before=h.requests.length;h.navigator.onLine=true;await h.emitGlobal('online');assert.ok(h.requests.length>before);assert.equal(h.gate.guard(),false);

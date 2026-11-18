@@ -4191,6 +4191,7 @@ if (fEvt === 'ALL') {
                         : 'ETAPA',
 
                 val: t.val,
+                generatedMilliseconds: t.generatedMilliseconds === true,
 
                 ms: ms,
 
@@ -4743,7 +4744,7 @@ if (fEvt === 'ALL') {
                                         font-weight:900;
                                     "
                                 >
-                                    ${et.val}
+                                    ${et.val}${et.generatedMilliseconds ? ' <small>milésimos gerados</small>' : ''}
                                     ${penHtml}
                                 </span>
 
@@ -4977,9 +4978,9 @@ if (fEvt === 'ALL') {
                      grouped[key] = { cpf: t.cpf, name: t.name, city: t.city, cat: t.cat, evtId: t.evtId, evtName: evtObj ? evtObj.t : "ETAPA", q: '--:--.---', o: '--:--.---', s: '--:--.---', num: "" }; 
                  } 
                  if(t.num) grouped[key].num = t.num; // Pega a placa
-                 if(t.runType === 'qualify') grouped[key].q = t.val; 
-                 else if(t.runType === '2nd') grouped[key].s = t.val; 
-                 else grouped[key].o = t.val; 
+                 const column = t.runType === 'qualify' ? 'q' : (t.runType === '2nd' ? 's' : 'o');
+                 grouped[key][column] = t.val;
+                 grouped[key][column + 'Generated'] = t.generatedMilliseconds === true; 
              });
              let sortedList = Object.values(grouped);
              
@@ -5083,14 +5084,14 @@ if (fEvt === 'ALL') {
                          gapHtml += `</div>`;
                      }
 
-                     const getTpl = (val, pen) => { let vHTML = val === 'DNF' ? '<span style="color:red">DNF</span>' : val; let pHTML = pen ? `<span style="color:red; font-size:8px; display:block;">(${pen})</span>` : ''; return `${vHTML}${pHTML}`; };
+                     const getTpl = (val, pen, generated) => { let vHTML = val === 'DNF' ? '<span style="color:red">DNF</span>' : val; let pHTML = pen ? `<span style="color:red; font-size:8px; display:block;">(${pen})</span>` : ''; return `${vHTML}${pHTML}${generated ? '<small style="font-size:8px; display:block">milésimos gerados</small>' : ''}`; };
                      if(fType === 'ALL') { 
                          let gridCols = has2nd ? '1fr 1fr 1fr' : '1fr 1fr';
-                         let secondRunHtml = has2nd ? `<div style="padding:5px; text-align:center; background:#ffe5b4;"><div style="font-size:8px; color:#d65a00; font-weight:bold">2ª DESCIDA</div><div style="font-family:monospace; font-size:11px; color:#333">${getTpl(r.s, r.sPen)}</div></div>` : '';
-                         columnsHtml = `<div style="display:grid; grid-template-columns: ${gridCols}; width:100%; border-top:1px dashed #eee;"><div style="padding:5px; text-align:center; border-right:1px solid #eee; background:#E6E6FA;"><div style="font-size:8px; color:#4B0082; font-weight:bold">QUALIFY</div><div style="font-family:monospace; font-size:11px; color:#333">${getTpl(r.q, r.qPen)}</div></div><div style="padding:5px; text-align:center; ${has2nd ? 'border-right:1px solid #eee;' : ''} background:#d4edda;"><div style="font-size:8px; color:#15803d; font-weight:bold">OFICIAL</div><div style="font-family:monospace; font-size:12px; font-weight:bold; color:#000">${getTpl(r.o, r.oPen)}</div>${gapHtml}</div>${secondRunHtml}</div>`;
+                         let secondRunHtml = has2nd ? `<div style="padding:5px; text-align:center; background:#ffe5b4;"><div style="font-size:8px; color:#d65a00; font-weight:bold">2ª DESCIDA</div><div style="font-family:monospace; font-size:11px; color:#333">${getTpl(r.s, r.sPen, r.sGenerated)}</div></div>` : '';
+                         columnsHtml = `<div style="display:grid; grid-template-columns: ${gridCols}; width:100%; border-top:1px dashed #eee;"><div style="padding:5px; text-align:center; border-right:1px solid #eee; background:#E6E6FA;"><div style="font-size:8px; color:#4B0082; font-weight:bold">QUALIFY</div><div style="font-family:monospace; font-size:11px; color:#333">${getTpl(r.q, r.qPen, r.qGenerated)}</div></div><div style="padding:5px; text-align:center; ${has2nd ? 'border-right:1px solid #eee;' : ''} background:#d4edda;"><div style="font-size:8px; color:#15803d; font-weight:bold">OFICIAL</div><div style="font-family:monospace; font-size:12px; font-weight:bold; color:#000">${getTpl(r.o, r.oPen, r.oGenerated)}</div>${gapHtml}</div>${secondRunHtml}</div>`;
                      } else { 
                          let label = fType === 'qualify' ? 'QUALIFY' : (fType === '1st' ? 'OFICIAL' : '2ª DESCIDA'); let val = fType === 'qualify' ? r.q : (fType === '1st' ? r.o : r.s); let pen = fType === 'qualify' ? r.qPen : (fType === '1st' ? r.oPen : r.sPen); let bg = fType === 'qualify' ? '#E6E6FA' : (fType === '1st' ? '#d4edda' : '#ffe5b4'); let color = fType === 'qualify' ? '#4B0082' : (fType === '1st' ? '#15803d' : '#d65a00'); 
-                         columnsHtml = `<div style="width:100%; border-top:1px dashed #eee; padding:10px; background:${bg}; text-align:center;"><div style="font-size:10px; color:${color}; font-weight:bold; margin-bottom:2px;">TEMPO ${label}</div><div style="font-family:monospace; font-size:16px; font-weight:bold; color:#333">${getTpl(val, pen)}</div>${gapHtml}</div>`; 
+                         columnsHtml = `<div style="width:100%; border-top:1px dashed #eee; padding:10px; background:${bg}; text-align:center;"><div style="font-size:10px; color:${color}; font-weight:bold; margin-bottom:2px;">TEMPO ${label}</div><div style="font-family:monospace; font-size:16px; font-weight:bold; color:#333">${getTpl(val, pen, fType === 'qualify' ? r.qGenerated : (fType === '1st' ? r.oGenerated : r.sGenerated))}</div>${gapHtml}</div>`; 
                      }
                      
                      let rowHtml = `<div class="rank-row" style="flex-direction:column; padding:0; margin-bottom:${fCat==='ALL_SEP'?'0':'5px'}; background:${i%2==0 ? '#fff' : '#f9f9f9'}; border-bottom:1px solid #ddd; border-radius: 6px; overflow: hidden; border: 1px solid #e2e8f0;"><div style="padding:8px 10px; display:flex; justify-content:space-between; width:100%; align-items:center;"><div>${evtTag}<div style="font-weight:bold; font-size:13px; color:#333; display:flex; align-items:center; flex-wrap:wrap;">${posDisplay} ${pName} ${placaHtml} <span class="badge-city" style="margin-left:5px">${pCityUF}</span></div><span class="${cClass}">${r.cat}</span></div></div>${columnsHtml}</div>`;

@@ -34,7 +34,7 @@
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     
     <link rel="stylesheet" href="style.css?v=160">
-    <link rel="stylesheet" href="direct-timing.css?v=2"> 
+    <link rel="stylesheet" href="direct-timing.css?v=3"> 
 </head>
 <body>
 
@@ -1000,12 +1000,36 @@
             Buscar atleta
             <input id="direct-timing-search" type="search" autocomplete="off" placeholder="Nome ou placa">
         </label>
+        <label for="direct-timing-category">
+            Categoria
+            <select id="direct-timing-category">
+                <option value="">Todas as categorias</option>
+            </select>
+        </label>
         <button type="button" id="direct-timing-download">Baixar planilha</button>
     </div>
-    <p id="direct-timing-help">Digite a hora com 6 ou 9 dígitos (HHMMSS ou HHMMSSmmm). Pressione Enter ou Tab após a chegada para calcular e publicar o tempo.</p>
+    <p id="direct-timing-help">Digite horas com 6 ou 9 dígitos. Se digitar só até os segundos, o app gera os milésimos. Confirme a chegada com Enter ou Tab para publicar.</p>
     <p id="direct-timing-status" role="status" aria-live="polite" aria-atomic="true"></p>
+    <section id="direct-timing-started" aria-labelledby="direct-timing-started-title" hidden>
+        <h3 id="direct-timing-started-title">Na pista</h3>
+        <div class="direct-timing-started-scroll">
+            <table class="direct-timing-table" aria-label="Atletas na pista">
+                <thead>
+                    <tr>
+                        <th scope="col">Placa</th>
+                        <th scope="col">Atleta</th>
+                        <th scope="col">Categoria</th>
+                        <th scope="col">Hora de largada</th>
+                        <th scope="col">Hora de chegada</th>
+                        <th scope="col">Resultado</th>
+                    </tr>
+                </thead>
+                <tbody id="direct-timing-running-rows"></tbody>
+            </table>
+        </div>
+    </section>
     <div class="direct-timing-scroll">
-        <table class="direct-timing-table" aria-label="Largada e resultados">
+        <table class="direct-timing-table" aria-label="Atletas a cronometrar">
             <thead>
                 <tr>
                     <th scope="col">Placa</th>
@@ -1678,11 +1702,11 @@ refreshListsOnly();
 
 <script src="season-policy.js?v=1"></script>
 <script src="ranking-policy.js?v=1"></script>
-<script src="maintenance.js?v=2"></script>
+<script src="maintenance.js?v=3"></script>
 <script src="maintenance-admin.js?v=1"></script>
 <script src="roster-policy.js?v=1"></script>
-<script src="script.js?v=172"></script>
-<script src="direct-timing.js?v=1"></script>
+<script src="script.js?v=173"></script>
+<script src="direct-timing.js?v=2"></script>
 
 </body>
 </html>

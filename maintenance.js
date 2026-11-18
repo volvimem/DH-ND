@@ -15,6 +15,7 @@
         const state = {ready:false, enabled:false, allowed:false, admin:false, loginRequested:false, message:CHECKING};
         let authReady = false, sdkConnected = false, epoch = 0, scheduled = null, lastIdentity = '', verifiedIdentity = '', publicHint;
         let pendingSave = null, errorVisible = false;
+        let lastGrantedIdentity = '', resumeIdentity = '', resumeTimer = null;
         const signals = new Map(), inertBefore = new Map();
         let gate, title, message, loginButton, logoutButton;
 
@@ -49,7 +50,7 @@
                 current(actor, version);
             }
             const url = baseURL + path + '.json' + (token ? '?auth=' + encodeURIComponent(token) : '');
-            const operation = Promise.resolve().then(() => global.fetch(url, {method:'GET', cache:'no-store'})).then(async response => {
+            const operation = Promise.resolve().then(() => global.fetch(url, {method:'GET', cache:'no-store', referrerPolicy:'no-referrer'})).then(async response => {
                 if (denialIsFalse && (response.status === 401 || response.status === 403)) return false;
                 if (!response.ok) throw failure('maintenance/read', UNAVAILABLE);
                 return response.json();
@@ -153,16 +154,24 @@
                 publicHint = JSON.stringify(raw);
                 if (!authReady) {publish({enabled:policy.enabled}); return;}
                 let admin = false, allowed = !policy.enabled, ownAllowed;
-                if (policy.enabled && sdkConnected && actor.matches) {
+                // A sessão retomada precisa de nova confirmação do servidor. Nenhum acesso é copiado do cache.
+                const verifiedResume = () => actor.matches && resumeIdentity === actor.key && lastGrantedIdentity === actor.key;
+                const canCheckPrivate = policy.enabled && actor.matches && (sdkConnected || verifiedResume());
+                if (canCheckPrivate) {
                     admin = await read(ROOT + '/adminAccess', actor, version, true) === true;
                     if (admin) allowed = true;
                     else {ownAllowed = await read(ROOT + '/allowedCpfs/' + actor.cpf, actor, version); allowed = ownAllowed === true;}
                 }
                 current(actor, version);
-                if (policy.enabled && !sdkConnected) {
+                if (policy.enabled && !sdkConnected && !verifiedResume()) {
                     admin = false;
                     allowed = false;
                     ownAllowed = undefined;
+                }
+                if (policy.enabled && canCheckPrivate && allowed) lastGrantedIdentity = actor.key;
+                else if (policy.enabled && canCheckPrivate && !allowed) {
+                    lastGrantedIdentity = '';
+                    resumeIdentity = '';
                 }
                 signal('own', policy.enabled && sdkConnected && actor.matches && !admin ? ROOT + '/allowedCpfs/' + actor.cpf : null, ownAllowed);
                 signal('admin', admin ? ROOT + '/adminAccess' : null, true);
@@ -192,6 +201,8 @@
             return schedule(false);
         }
         function beginLogin(callHandler = true) {
+            lastGrantedIdentity = '';
+            resumeIdentity = '';
             epoch++;
             publish({allowed:false, admin:false, loginRequested:true});
             if (callHandler !== false && typeof options.onLogin === 'function') options.onLogin();
@@ -237,8 +248,36 @@
             return write.payload;
         }
 
+        function resumeAccess() {
+            if (global.document?.visibilityState === 'hidden' || global.navigator?.onLine === false || resumeTimer !== null) return;
+            const actor = capture();
+            if (actor.matches && lastGrantedIdentity === actor.key) resumeIdentity = actor.key;
+            if (!sdkConnected && typeof database.goOnline === 'function') database.goOnline();
+            schedule(state.enabled || !state.allowed);
+            resumeTimer = global.setTimeout(() => {
+                resumeTimer = null;
+                if (global.document?.visibilityState === 'hidden' || global.navigator?.onLine === false || (!state.enabled && state.allowed)) return;
+                if (!sdkConnected && resumeIdentity === capture().key && typeof database.goOffline === 'function' && typeof database.goOnline === 'function') {
+                    database.goOffline();
+                    database.goOnline();
+                }
+                if (!state.allowed) schedule(true);
+            }, 3000);
+        }
+
         render();
-        auth.onAuthStateChanged(() => {authReady = true; schedule(false);}, () => {authReady = false; epoch++; errorVisible = true; publish({ready:false, allowed:false, admin:false, message:UNAVAILABLE});});
+        auth.onAuthStateChanged(() => {
+            authReady = true;
+            if (capture().key !== lastGrantedIdentity) { lastGrantedIdentity = ''; resumeIdentity = ''; }
+            schedule(false);
+        }, () => {
+            authReady = false;
+            lastGrantedIdentity = '';
+            resumeIdentity = '';
+            epoch++;
+            errorVisible = true;
+            publish({ready:false, allowed:false, admin:false, message:UNAVAILABLE});
+        });
         const publicRef = database.ref(ROOT + '/public');
         publicRef.on('value', snapshot => {
             const hint = JSON.stringify(snapshot.val());
@@ -248,16 +287,37 @@
         database.ref('.info/connected').on('value', snapshot => {
             const wasConnected = sdkConnected;
             sdkConnected = snapshot.val() === true;
-            if (sdkConnected) schedule(false);
-            else if (wasConnected && state.enabled) schedule(true);
+            if (sdkConnected) {
+                resumeIdentity = '';
+                schedule(false);
+            } else if (wasConnected && state.enabled) {
+                resumeIdentity = resumeTimer !== null && capture().key === lastGrantedIdentity ? lastGrantedIdentity : "";
+                schedule(true);
+            }
         }, () => {
             sdkConnected = false;
             if (state.enabled) schedule(true);
         });
         global.setInterval(() => schedule(false), 20000);
+        global.document?.addEventListener?.("visibilitychange", () => {
+            if (global.document.visibilityState === "visible") resumeAccess();
+            else if (resumeTimer !== null) {
+                global.clearTimeout(resumeTimer);
+                resumeTimer = null;
+            }
+        });
         if (global.addEventListener) {
-            global.addEventListener('offline', () => {epoch++; errorVisible = true; publish({ready:false, allowed:false, admin:false, message:UNAVAILABLE});});
-            global.addEventListener('online', () => schedule(true));
+            global.addEventListener('offline', () => {
+                resumeIdentity = '';
+                if (resumeTimer !== null) global.clearTimeout(resumeTimer);
+                resumeTimer = null;
+                epoch++;
+                errorVisible = true;
+                publish({ready:false, allowed:false, admin:false, message:UNAVAILABLE});
+            });
+            global.addEventListener('online', resumeAccess);
+            global.addEventListener('pageshow', event => { if (event.persisted) resumeAccess(); });
+            global.addEventListener('focus', () => { if (!state.allowed || !sdkConnected) resumeAccess(); });
         }
         schedule(false);
         return {state, guard, refreshIdentity, beginLogin, getPolicy, savePolicy};

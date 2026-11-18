@@ -20,6 +20,25 @@
         return {ms, text:`${hours}:${minutes}:${seconds}.${fraction}`};
     }
 
+    function completeClock(value, side, previous = null, other = null, random = Math.random) {
+        const clock = parseClock(value);
+        if (!clock) return null;
+        const text = String(value).trim();
+        if (previous?.text === text) return previous;
+        const supplied = (clockWithSeparators.exec(text) || compactClock.exec(text))[4];
+        if (supplied !== undefined) return {...clock, generated:false};
+
+        // Keep the entered seconds unchanged when both clocks have generated milliseconds.
+        // Allow entry in either order and ensure the two generated fractions differ.
+        const min = side === 'finish' ? (other?.generated ? other.ms % 1000 + 1 : 2) : 1;
+        const max = side === 'start' ? (other?.generated ? other.ms % 1000 - 1 : 998) : 999;
+        let fraction = min + Math.floor(random() * (max - min + 1));
+        if (other && !other.generated && fraction === other.ms % 1000) {
+            fraction = fraction === max ? min : fraction + 1;
+        }
+        return {ms:clock.ms + fraction, text:clock.text.slice(0, -3) + String(fraction).padStart(3, '0'), generated:true};
+    }
+
     function calculate(start, finish) {
         const from = parseClock(start);
         const to = parseClock(finish);
@@ -113,7 +132,7 @@
         return {...records, [String(index)]:record};
     }
 
-    return {runs, parseClock, calculate, findResult, indexResults, appendResult};
+    return {runs, parseClock, completeClock, calculate, findResult, indexResults, appendResult};
 });
 
 (function () {
@@ -123,11 +142,14 @@
     const element = id => document.getElementById('direct-timing-' + id);
     const dialog = element('dialog');
     const rows = element('rows');
+    const runningRows = element('running-rows');
+    const runningSection = element('started');
     const search = element('search');
+    const category = element('category');
     const eligible = new Set(['CONFIRMADO', 'ISENTO']);
     const comparator = new Intl.Collator('pt-BR', {numeric:true, sensitivity:'base'});
     const simplify = value => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().trim();
-    const categoryKey = value => simplify(value).replace(/\s*\(EXTRA\)$/, '');
+    const categoryKey = value => simplify(value).replace(/\s*\((?:EXTRA|OFICIAL)\)$/, '');
     let session = null;
 
     function viewerFor(account) {
@@ -180,6 +202,28 @@
         row.note.textContent = message;
     }
 
+    function loadDrafts(context) {
+        try { return new Map(Object.entries(JSON.parse(sessionStorage.getItem(context.draftKey) || '{}'))); }
+        catch (_) { return new Map(); }
+    }
+
+    function restoreClock(stored, side) {
+        const clock = policy.parseClock(stored?.text);
+        if (!clock) return null;
+        const ms = clock.ms % 1000;
+        const generated = stored.generated === true && (side === 'start' ? ms >= 1 && ms <= 998 : ms >= 2);
+        return {...clock, generated};
+    }
+
+    function syncDraft(context, row) {
+        if (row.saved || (!row.startTime && !row.finishTime)) context.drafts.delete(row.key);
+        else context.drafts.set(row.key, {start:row.startTime, finish:row.finishTime});
+        try {
+            if (context.drafts.size) sessionStorage.setItem(context.draftKey, JSON.stringify(Object.fromEntries(context.drafts)));
+            else sessionStorage.removeItem(context.draftKey);
+        } catch (_) {}
+    }
+
     function cell(title, contents) {
         const td = document.createElement('td');
         td.dataset.label = title;
@@ -200,29 +244,25 @@
         return field;
     }
 
-    function lockResult(row, result) {
+    function markPublished(context, row, result) {
         row.saved = result;
-        row.start.value = result.startClock || '';
-        row.finish.value = result.finishClock || '';
-        row.output.textContent = result.val || result.status || 'Publicado';
-        row.start.readOnly = true;
-        row.finish.readOnly = true;
-        row.retry.hidden = true;
-        setRowState(row, 'Publicado');
+        context.confirmed.set(row.key, result);
+        syncDraft(context, row);
+        row.tr.remove();
+        context.rows.delete(row.key);
     }
 
     function preview(row) {
         if (row.saved || row.pending) return;
-        const calculation = policy.calculate(row.start.value, row.finish.value);
-        row.output.textContent = calculation?.val || '—';
+        row.output.textContent = '—';
         row.retry.hidden = true;
         setRowState(row, '');
     }
 
     async function publish(context, row) {
         if (session !== context || row.saved || row.pending) return;
-        if (!row.start.value.trim() || !row.finish.value.trim()) return;
-        const calculation = policy.calculate(row.start.value, row.finish.value);
+        if (!row.startTime || !row.finishTime) return;
+        const calculation = policy.calculate(row.startTime.text, row.finishTime.text);
         if (!calculation) {
             setRowState(row, 'Confira as horas. A chegada precisa ser posterior à largada.');
             return;
@@ -235,7 +275,8 @@
         }
         const existing = policy.findResult(db.tempos, athlete);
         if (existing) {
-            lockResult(row, existing);
+            markPublished(context, row, existing);
+            filterRows();
             status('O resultado deste atleta já foi publicado.', 'success');
             return;
         }
@@ -248,7 +289,8 @@
         row.pending = true;
         row.retry.hidden = true;
         setRowState(row, 'Enviando…');
-        const record = {...athlete, ...calculation, status:'OK'};
+        const generated = row.startTime.generated || row.finishTime.generated;
+        const record = {...athlete, ...calculation, status:'OK', ...(generated && {generatedMilliseconds:true})};
 
         try {
             const ref = database.ref(context.root + '/tempos');
@@ -260,8 +302,12 @@
             if (session !== context) return;
             const confirmed = result.committed ? record : policy.findResult(result.snapshot?.val(), athlete);
             if (confirmed) {
-                lockResult(row, confirmed);
-                status(result.committed ? 'Tempo publicado no app.' : 'A lista já contém um resultado para este atleta.', 'success');
+                markPublished(context, row, confirmed);
+                filterRows();
+                const timeLabel = confirmed.val || confirmed.status;
+                status(result.committed
+                    ? `${athlete.name}: ${timeLabel} publicado${confirmed.generatedMilliseconds ? ' · milésimos gerados' : ''}.`
+                    : `${athlete.name} já tem resultado publicado: ${timeLabel}.`, 'success');
             } else {
                 setRowState(row, 'O tempo não foi confirmado. Confira a etapa e tente novamente.');
             }
@@ -298,11 +344,29 @@
         const resultCell = cell('Resultado', output);
         resultCell.append(note, retry);
         const row = {key, tr, start, finish, output, note, retry, query:simplify([athlete.num, athlete.name, athlete.cat].join(' '))};
+        row.category = categoryKey(athlete.cat);
+        const draft = context.drafts.get(key);
+        row.startTime = restoreClock(draft?.start, 'start');
+        row.finishTime = restoreClock(draft?.finish, 'finish');
+        start.value = row.startTime?.text || '';
+        finish.value = row.finishTime?.text || '';
+        if (row.startTime && row.finishTime) {
+            output.textContent = policy.calculate(start.value, finish.value)?.val || '—';
+            retry.hidden = false;
+        }
         for (const [field, other] of [[start, finish], [finish, start]]) {
+            const isStart = field === start;
+            const key = isStart ? 'startTime' : 'finishTime';
+            const otherKey = isStart ? 'finishTime' : 'startTime';
             const commit = () => {
-                const clock = policy.parseClock(field.value);
+                if (row.saved || row.pending) return;
+                const clock = policy.completeClock(field.value, isStart ? 'start' : 'finish', row[key], row[otherKey]);
+                row[key] = clock;
                 if (clock) field.value = clock.text;
+                syncDraft(context, row);
+                filterRows();
                 void publish(context, row);
+                if (!clock && field.value.trim()) setRowState(row, 'Digite o horário completo.');
             };
             field.addEventListener('input', () => preview(row));
             field.addEventListener('change', commit);
@@ -325,14 +389,48 @@
     function filterRows() {
         if (!session) return;
         const query = simplify(search.value);
-        let visible = 0;
+        const focused = document.activeElement;
+        const inProgress = [...session.rows.values()].filter(row => row.startTime)
+            .sort((a, b) => a.startTime.ms - b.startTime.ms);
+        const waiting = [];
         for (const row of session.rows.values()) {
-            row.tr.hidden = !row.query.includes(query);
-            if (!row.tr.hidden) visible++;
+            row.tr.dataset.inProgress = String(!!row.startTime);
+            row.tr.hidden = !row.startTime && (!row.query.includes(query) || (category.value && row.category !== category.value));
+            if (!row.startTime) waiting.push(row);
         }
+        for (const [container, list] of [[runningRows, inProgress], [rows, waiting]]) {
+            list.forEach((row, index) => {
+                if (container.children[index] !== row.tr) container.insertBefore(row.tr, container.children[index] || null);
+            });
+        }
+        if (focused?.isConnected && focused !== document.activeElement) focused.focus({preventScroll:true});
+        runningSection.hidden = !inProgress.length;
+        const visible = waiting.some(row => !row.tr.hidden);
         const empty = element('empty');
-        empty.hidden = visible > 0;
-        empty.textContent = session.rows.size ? 'Nenhum atleta encontrado.' : 'Ainda não há inscritos confirmados ou isentos nesta etapa.';
+        empty.hidden = visible;
+        if (!session.athleteCount) empty.textContent = 'Ainda não há inscritos confirmados ou isentos nesta etapa.';
+        else if (!session.rows.size) empty.textContent = 'Todos os resultados desta volta foram publicados.';
+        else if (!waiting.length) empty.textContent = 'Nenhum atleta aguardando a largada.';
+        else empty.textContent = 'Nenhum atleta aguardando nesta busca.';
+    }
+
+    function refreshCategories(context, athletes) {
+        const categories = new Map();
+        for (const athlete of athletes.values()) {
+            const key = categoryKey(athlete.cat);
+            if (!categories.has(key)) categories.set(key, athlete.cat);
+        }
+        if (context.categories && JSON.stringify([...context.categories]) === JSON.stringify([...categories])) return;
+        const selected = category.value;
+        context.categories = categories;
+        category.replaceChildren();
+        for (const [key, label] of [['', 'Todas as categorias'], ...[...categories].sort((a, b) => comparator.compare(a[1], b[1]))]) {
+            const option = document.createElement('option');
+            option.value = key;
+            option.textContent = label;
+            category.append(option);
+        }
+        category.value = categories.has(selected) ? selected : '';
     }
 
     function refresh() {
@@ -347,6 +445,8 @@
             return;
         }
         const athletes = athletesFor(context);
+        context.athleteCount = athletes.size;
+        refreshCategories(context, athletes);
         for (const [key, row] of context.rows) {
             if (!athletes.has(key)) {
                 row.tr.remove();
@@ -358,13 +458,17 @@
         const resultFor = policy.indexResults(db.tempos);
         for (const [key, athlete] of ordered) {
             let row = context.rows.get(key);
+            const result = resultFor(athlete) || context.confirmed.get(key);
+            if (result) {
+                if (row) markPublished(context, row, result);
+                else if (context.drafts.has(key)) syncDraft(context, {key, saved:result});
+                continue;
+            }
             if (!row) {
                 row = createRow(context, key, athlete);
                 context.rows.set(key, row);
                 rows.append(row.tr);
             }
-            const result = resultFor(athlete);
-            if (result && result !== row.saved) lockResult(row, result);
         }
         filterRows();
         if (element('status').dataset.state === 'pending') status('');
@@ -379,9 +483,14 @@
         if (!context.uid) return toast('ENTRE NOVAMENTE COM SUA CONTA PARA CRONOMETRAR.', 'error');
         if (!rosterReady()) return toast('AGUARDE A ATUALIZAÇÃO DOS CADASTROS PARA CRONOMETRAR.', 'info');
         if (!permitted(context)) return toast('SEM PERMISSÃO PARA CRONOMETRAR ESTA ETAPA.', 'error');
+        context.draftKey = ['dhnd-timing-draft', context.root, context.eventId, context.runType, context.uid].join(':');
+        context.drafts = loadDrafts(context);
+        context.confirmed = new Map();
         session = context;
         rows.replaceChildren();
+        runningRows.replaceChildren();
         search.value = '';
+        category.value = '';
         element('event').textContent = localEvent(context).t;
         element('run').textContent = policy.runs[runType] + ' · ' + context.year;
         status('');
@@ -395,5 +504,6 @@
         if (session && permitted(session)) window.gerarExcelLargada({eventId:session.eventId, runType:session.runType});
     });
     search.addEventListener('input', filterRows);
+    category.addEventListener('change', filterRows);
     window.DHNDDirectDesk = {open, refresh, close:() => { if (dialog.open) dialog.close(); }};
 })();
