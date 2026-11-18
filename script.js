@@ -106,9 +106,40 @@ let currentInscricaoPendente = null; let currentGalleryList = []; let currentGal
 // ==========================================================
 // 2. FUNÇÕES UTILITÁRIAS E LÓGICA DE DIVISÃO DO MENU
 // ==========================================================
+function eventSealFields() {
+    return [1, 2, 3].map(number => document.getElementById('adm-evt-seal-' + number));
+}
+
+function updateEventSealFields(type) {
+    const isNonOfficial = type === 'NON_OFFICIAL';
+    const third = document.getElementById('adm-evt-seal-third');
+    const help = document.getElementById('adm-evt-seal-help');
+    if (third) third.style.display = isNonOfficial ? '' : 'none';
+    if (help) help.textContent = isNonOfficial
+        ? 'Escolha até três selos para o calendário.'
+        : 'O tipo selecionado já conta como um selo. Você pode acrescentar mais dois.';
+
+    const selected = new Set(isNonOfficial ? [] : [type]);
+    const fields = eventSealFields();
+    fields.forEach((field, index) => {
+        field.disabled = !isNonOfficial && index === 2;
+        if (field.value && (field.disabled || selected.has(field.value))) {
+            field.value = '';
+            localStorage.removeItem('autosave_' + field.id);
+        }
+        if (field.value) selected.add(field.value);
+    });
+    for (const field of fields) {
+        for (const option of field.options) {
+            option.disabled = option.value !== field.value && selected.has(option.value);
+        }
+    }
+}
+
 window.toggleEventType = function() {
     const type = document.getElementById('adm-evt-type').value;
     const isNonOfficial = (type === 'NON_OFFICIAL');
+    updateEventSealFields(type);
 
     const offGroup = document.getElementById('adm-evt-official-group');
     const nonOffGroup = document.getElementById('adm-evt-nonofficial-group');
@@ -121,16 +152,15 @@ window.toggleEventType = function() {
     if (choice) choice.style.display = isNonOfficial ? 'block' : 'none';
     if (scoring) scoring.style.display = !isNonOfficial || (enabled && enabled.value === 'true') ? 'block' : 'none';
 };
-function getBadgeHtml(evt) { 
-    let txt = "FPC/PE"; let cls = "badge-pe";
-    if(evt.type==='CBC') { txt="CBC NACIONAL"; cls="badge-cbc"; } 
-    else if(evt.type==='NON_OFFICIAL') { txt="NÃO OFICIAL"; cls="badge-pe"; } 
-    
-    if(evt.status==='POSTPONED') { txt="ADIADO"; cls="badge-postponed"; } 
-    if(evt.status==='CANCELLED') { txt="CANCELADO"; cls="badge-postponed"; } 
-    if(evt.type==='NON_OFFICIAL' && evt.status!=='POSTPONED' && evt.status!=='CANCELLED') return '';
-    
-    return `<div class="evt-badge ${cls}" ${evt.type==='NON_OFFICIAL' && evt.status==='OPEN' ? 'style="background:#1e293b; color:white; border-color:#475569;"' : ''}>${txt}</div>`;
+function getBadgeHtml(event, inline = false) {
+    const status = inline ? '' : {POSTPONED: 'ADIADO', CANCELLED: 'CANCELADO'}[event.status] || '';
+    const {eventSeals, eventSealLabels} = window.DHNDScoring;
+    const badges = status
+        ? [[status, 'badge-postponed']]
+        : eventSeals(event).map(code => [eventSealLabels[code], 'badge-' + code.toLowerCase()]);
+    if (!badges.length) return '';
+    const placement = inline ? ' evt-badges-inline' : '';
+    return `<div class="evt-badges${placement}">${badges.map(([label, style]) => `<span class="evt-badge ${style}">${label}</span>`).join('')}</div>`;
 }
 
 function toast(m, type="info") { 
@@ -3860,6 +3890,9 @@ window.renderPilotHistoryModal = function(cpf, name) {
 // ==========================================================
 window.populatePublicFilters = function(tab) {
     if (!db) return;
+    const athletes = new Map(Object.values(db.users || {}).filter(profile => profile?.cpf)
+        .map(profile => [publicAthleteKey(profile.cpf), profile]));
+    populatePublicRegionFilter(tab, athletes);
     
     // 1. FILTRO DE ETAPAS
     const selEvt = document.getElementById('filter-evt-' + tab);
@@ -3944,7 +3977,68 @@ window.populatePublicFilters = function(tab) {
         if (currentCat && selCat.querySelector(`option[value="${currentCat}"]`)) selCat.value = currentCat;
         else selCat.value = 'ALL';
     }
+    return athletes;
 };
+
+const BRAZILIAN_STATES = {
+    AC:'ACRE', AL:'ALAGOAS', AP:'AMAPÁ', AM:'AMAZONAS', BA:'BAHIA', CE:'CEARÁ', DF:'DISTRITO FEDERAL',
+    ES:'ESPÍRITO SANTO', GO:'GOIÁS', MA:'MARANHÃO', MT:'MATO GROSSO', MS:'MATO GROSSO DO SUL',
+    MG:'MINAS GERAIS', PA:'PARÁ', PB:'PARAÍBA', PR:'PARANÁ', PE:'PERNAMBUCO', PI:'PIAUÍ',
+    RJ:'RIO DE JANEIRO', RN:'RIO GRANDE DO NORTE', RS:'RIO GRANDE DO SUL', RO:'RONDÔNIA', RR:'RORAIMA',
+    SC:'SANTA CATARINA', SP:'SÃO PAULO', SE:'SERGIPE', TO:'TOCANTINS'
+};
+
+function publicAthleteKey(cpf) {
+    return String(cpf ?? '').replace(/[.\s-]/g, '');
+}
+
+function athleteStateFromCity(city) {
+    const suffix = String(city ?? '').trim().toUpperCase().match(/(?:[-/,(]\s*|\s+)([A-Z]{2})\)?$/)?.[1];
+    return BRAZILIAN_STATES[suffix] ? suffix : '';
+}
+
+function publicAthleteState(profile) {
+    const uf = String(profile?.uf ?? '').trim().toUpperCase();
+    return BRAZILIAN_STATES[uf] ? uf : athleteStateFromCity(profile?.city);
+}
+
+function publicFilterState(region) {
+    const uf = String(region).startsWith('UF:') ? region.slice(3) : '';
+    return BRAZILIAN_STATES[uf] ? uf : '';
+}
+
+function populatePublicRegionFilter(tab, athletes) {
+    const select = document.getElementById('filter-region-' + tab);
+    const group = document.getElementById('filter-states-' + tab);
+    if (!select || !group) return;
+
+    const preferred = select.dataset.preferredRegion || localStorage.getItem('ui_filter-region-' + tab) || select.value;
+    const states = new Set([...athletes.values()].map(publicAthleteState).filter(Boolean));
+    const options = [...states].sort((a, b) => BRAZILIAN_STATES[a].localeCompare(BRAZILIAN_STATES[b], 'pt-BR'))
+        .map(uf => `<option value="UF:${uf}">${BRAZILIAN_STATES[uf]} (${uf})</option>`).join('');
+    if (group.innerHTML !== options) group.innerHTML = options;
+    group.hidden = states.size === 0;
+    select.value = preferred === 'PE' || preferred === 'NORDESTE' || states.has(publicFilterState(preferred))
+        ? preferred : 'NORDESTE';
+}
+
+function restrictPublicAthletes(rows, region, athletes) {
+    const uf = publicFilterState(region);
+    if (!uf && region !== 'PE') return rows;
+    return rows.filter(row => {
+        const profile = athletes.get(publicAthleteKey(row.cpf));
+        if (region === 'PE') return profile && (profile.uf === 'PE' || !profile.uf || profile.filiadoPE === true);
+        return (publicAthleteState(profile) || athleteStateFromCity(row.city)) === uf;
+    });
+}
+
+function publicRegionCaption(tab, region) {
+    const uf = publicFilterState(region);
+    const prefix = tab === 'ranking' ? 'RANKING' : 'RESULTADO';
+    if (uf) return `${prefix} NORDESTE · ${BRAZILIAN_STATES[uf]} (${uf})`;
+    if (region === 'PE') return prefix + ' PERNAMBUCO';
+    return prefix + (tab === 'ranking' ? ' NORDESTE' : ' NORDESTE (OPEN)');
+}
 
 function renderContent(t) { 
     if (t === 'race') {
@@ -3976,10 +4070,10 @@ function renderContent(t) {
             pD.style.display = 'flex';
             pD.innerHTML = inactiveEvents.map(e => { 
                 if(e.status === 'CLOSED') {
-                    return `<div class="past-event-chip" style="background:var(--pe-green); color:white; border:none; cursor:pointer; min-width:160px; box-shadow:0 4px 6px rgba(0,0,0,0.2); transition:transform 0.2s;" onclick="verGaleriaEvento(${e.id})" onmousedown="this.style.transform='scale(0.95)'" onmouseup="this.style.transform='scale(1)'"><b style="color:var(--pe-yellow); font-size:11px; display:block; margin-bottom:2px;"><i class="fas fa-check-circle"></i> CONCLUÍDO</b><span style="font-weight:900; font-size:12px; display:block; white-space:normal; line-height:1.1;">${e.t}</span><span style="font-size:9px; opacity:0.9;">${e.d} ${e.m}</span><div style="font-size:9px; background:rgba(0,0,0,0.2); padding:4px; border-radius:4px; margin-top:5px; font-weight:bold;"><i class="fas fa-images"></i> VER ÁLBUM</div></div>`;
+                    return `<div class="past-event-chip" style="background:var(--pe-green); color:white; border:none; cursor:pointer; min-width:160px; box-shadow:0 4px 6px rgba(0,0,0,0.2); transition:transform 0.2s;" onclick="verGaleriaEvento(${e.id})" onmousedown="this.style.transform='scale(0.95)'" onmouseup="this.style.transform='scale(1)'"><b style="color:var(--pe-yellow); font-size:11px; display:block; margin-bottom:2px;"><i class="fas fa-check-circle"></i> CONCLUÍDO</b><span style="font-weight:900; font-size:12px; display:block; white-space:normal; line-height:1.1;">${e.t}</span><span style="font-size:9px; opacity:0.9;">${e.d} ${e.m}</span>${getBadgeHtml(e, true)}<div style="font-size:9px; background:rgba(0,0,0,0.2); padding:4px; border-radius:4px; margin-top:5px; font-weight:bold;"><i class="fas fa-images"></i> VER ÁLBUM</div></div>`;
                 } else {
                     let stTxt = e.status === 'CANCELLED' ? 'CANCELADO' : 'ADIADO'; let stColor = e.status === 'CANCELLED' ? 'red' : '#d65a00'; 
-                    return `<div class="past-event-chip chip-closed"><b style="color:${stColor}">${stTxt}</b><br>${e.t}</div>`;
+                    return `<div class="past-event-chip chip-closed"><b style="color:${stColor}">${stTxt}</b><br>${e.t}${getBadgeHtml(e, true)}</div>`;
                 }
             }).join('');
         } else { pD.style.display = 'none'; }
@@ -4124,7 +4218,7 @@ let imgHtml = e.img ? `<img src="${e.img}" class="evt-img-standard">` : `<div cl
     } else if (t === 'tempos') {
          const listDiv = document.getElementById('list-'+t);
          if(listDiv) {
-             populatePublicFilters(t);
+             const athletes = populatePublicFilters(t);
              const fEvt = document.getElementById('filter-evt-'+t).value;
              const fCat = document.getElementById('filter-cat-'+t).value; const fType = document.getElementById('filter-type-tempos').value; const fRegion = document.getElementById('filter-region-tempos').value;
              const stages = new Map(getSeasonEvents().filter(event => event.status !== 'CANCELLED')
@@ -4133,7 +4227,7 @@ let imgHtml = e.img ? `<img src="${e.img}" class="evt-img-standard">` : `<div cl
              if (fEvt === 'ALL') allTimes = allTimes.filter(time => stages.has(String(time.evtId)));
              else if (fEvt && fEvt !== 'YEAR_BEST') allTimes = allTimes.filter(time => String(time.evtId) === fEvt);
              if (fCat && fCat !== 'ALL' && fCat !== 'ALL_SEP') allTimes = allTimes.filter(i => window.normalizeCatName(i.cat) === window.normalizeCatName(fCat));
-             if (fRegion === 'PE') allTimes = allTimes.filter(t => { const u = db.users.find(user => user.cpf === t.cpf); return u && (u.uf === 'PE' || !u.uf || u.filiadoPE === true); });
+             allTimes = restrictPublicAthletes(allTimes, fRegion, athletes);
             
              // ==========================================================
 // MELHORES DO ANO
@@ -4469,10 +4563,7 @@ if (fEvt === 'YEAR_BEST') {
             );
 
 
-    const tituloRegiaoAno =
-        fRegion === 'PE'
-            ? 'RESULTADO PERNAMBUCO'
-            : 'RESULTADO NORDESTE (OPEN)';
+    const tituloRegiaoAno = publicRegionCaption(t, fRegion);
 
 
     const headerAno = `
@@ -5101,7 +5192,7 @@ if (fEvt === 'YEAR_BEST') {
                  temposLideres.set(scope, Math.min(ms, temposLideres.get(scope) ?? Infinity));
              });
              const evtObjH = db.events.find(e => String(e.id) === String(fEvt)); const evtNameHeader = fEvt === 'ALL' ? 'TODAS AS ETAPAS' : (evtObjH ? evtObjH.t : 'ETAPA'); const catNameHeader = fCat === 'ALL' ? 'MELHORES DA PISTA' : (fCat === 'ALL_SEP' ? 'GERAL SEPARADA (POR CATEGORIA)' : fCat);
-             const regionNameHeader = fRegion === 'PE' ? 'RESULTADO PERNAMBUCO' : 'RESULTADO NORDESTE (OPEN)'; const typeNameHeader = fType === 'ALL' ? 'GERAL (TODAS AS DESCIDAS)' : (fType === 'qualify' ? 'QUALIFY' : (fType === '1st' ? '1ª DESCIDA (OFICIAL)' : '2ª DESCIDA'));
+             const regionNameHeader = publicRegionCaption(t, fRegion); const typeNameHeader = fType === 'ALL' ? 'GERAL (TODAS AS DESCIDAS)' : (fType === 'qualify' ? 'QUALIFY' : (fType === '1st' ? '1ª DESCIDA (OFICIAL)' : '2ª DESCIDA'));
              const headerTag = `<div class="print-header" style="background: linear-gradient(135deg, var(--pe-blue), #1e3a8a); color: white; padding: 15px; border-radius: 8px; margin-bottom: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center;"><h2 style="margin: 0; font-size: 18px; font-weight: 900; text-transform: uppercase;">${fEvt === 'ALL' ? 'RESULTADOS POR ETAPA' : 'RESULTADOS OFICIAIS'}</h2><div style="font-size: 11px; margin-top: 5px; opacity: 0.9; font-weight: bold;"><i class="fas fa-map-marker-alt"></i> ${regionNameHeader} &nbsp;|&nbsp; <i class="fas fa-bicycle"></i> ${catNameHeader}</div><div style="font-size: 11px; margin-top: 5px; opacity: 0.9; font-weight: bold;"><i class="fas fa-stopwatch"></i> ${typeNameHeader}</div><div style="font-size: 12px; margin-top: 5px; color: #ffe500; font-weight: bold;">${evtNameHeader}</div></div>`;
              if(sortedList.length === 0) listDiv.innerHTML = headerTag + '<div style="padding:20px; text-align:center; color:#999; font-size:11px">Nenhum resultado para os filtros selecionados.</div>';
              else {
@@ -5172,7 +5263,7 @@ if (fEvt === 'YEAR_BEST') {
          }
 
     } else if (t === 'ranking') {
-         populatePublicFilters(t);
+         const athletes = populatePublicFilters(t);
          const fEvt = document.getElementById('filter-evt-ranking').value;
          const fCat = document.getElementById('filter-cat-'+t).value; 
          const fRegion = document.getElementById('filter-region-ranking').value;
@@ -5186,7 +5277,7 @@ if (fEvt === 'YEAR_BEST') {
          if(div) {
              let filteredList = list;
              if (fCat && fCat !== 'ALL' && fCat !== 'ALL_SEP') filteredList = filteredList.filter(i => window.normalizeCatName(i.cat) === window.normalizeCatName(fCat));
-             if (fRegion === 'PE') filteredList = filteredList.filter(r => { const u = db.users.find(user => user.cpf === r.cpf); return u && (u.uf === 'PE' || !u.uf || u.filiadoPE === true); });
+             filteredList = restrictPublicAthletes(filteredList, fRegion, athletes);
              
              // ==========================================================
              // LÓGICA DO RANKING POR CIDADES (INTELIGENTE: IGNORA ACENTOS)
@@ -5224,7 +5315,7 @@ if (fEvt === 'YEAR_BEST') {
 
                  const evtObjH = db.events.find(e => String(e.id) === String(fEvt)); 
                  const evtNameHeader = fEvt === 'ALL' ? 'GERAL DA TEMPORADA (SOMA DAS ETAPAS)' : (evtObjH ? evtObjH.t : 'ETAPA'); 
-                 const regionNameHeader = fRegion === 'PE' ? 'RANKING PERNAMBUCO' : 'RANKING NORDESTE';
+                 const regionNameHeader = publicRegionCaption(t, fRegion);
                  const catNameHeader = fCat === 'ALL' ? 'SOMA DE TODAS AS CATEGORIAS' : fCat;
 
                  const headerTag = `<div class="print-header" style="background: linear-gradient(135deg, #d50000, #990000); color: white; padding: 15px; border-radius: 8px; margin-bottom: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center;"><h2 style="margin: 0; font-size: 18px; font-weight: 900; text-transform: uppercase;">RANKING POR CIDADES</h2><div style="font-size: 11px; margin-top: 5px; opacity: 0.9; font-weight: bold;"><i class="fas fa-map-marker-alt"></i> ${regionNameHeader} &nbsp;|&nbsp; <i class="fas fa-bicycle"></i> ${catNameHeader}</div><div style="font-size: 12px; margin-top: 5px; color: #ffe500; font-weight: bold;">${evtNameHeader}</div></div>`;
@@ -5347,7 +5438,7 @@ if (fEvt === 'YEAR_BEST') {
              // ----------------------------------------------------------
 
              const evtObjH = db.events.find(e => String(e.id) === String(fEvt)); const evtNameHeader = fEvt === 'ALL' ? 'GERAL DA TEMPORADA (SOMA DAS ETAPAS)' : (evtObjH ? evtObjH.t : 'ETAPA'); const catNameHeader = fCat === 'ALL' ? 'MELHORES DA PISTA' : (fCat === 'ALL_SEP' ? 'GERAL SEPARADA (POR CATEGORIA)' : fCat);
-             const regionNameHeader = fRegion === 'PE' ? 'RANKING PERNAMBUCO' : 'RANKING NORDESTE';
+             const regionNameHeader = publicRegionCaption(t, fRegion);
              const headerTag = `<div class="print-header" style="background: linear-gradient(135deg, #d50000, #990000); color: white; padding: 15px; border-radius: 8px; margin-bottom: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center;"><h2 style="margin: 0; font-size: 18px; font-weight: 900; text-transform: uppercase;">RANKING</h2><div style="font-size: 11px; margin-top: 5px; opacity: 0.9; font-weight: bold;"><i class="fas fa-map-marker-alt"></i> ${regionNameHeader} &nbsp;|&nbsp; <i class="fas fa-bicycle"></i> ${catNameHeader}</div><div style="font-size: 12px; margin-top: 5px; color: #ffe500; font-weight: bold;">${evtNameHeader}</div></div>`;
              
              if(filteredList.length === 0) div.innerHTML = headerTag + '<div style="padding:20px; text-align:center; color:#999; font-size:11px">Nenhum ponto registrado.</div>';
@@ -6056,7 +6147,11 @@ function renderAdmEvents() {
         list.innerHTML = '<div style="color:#666; padding:10px">Nenhum evento cadastrado para a temporada ' + SYSTEM_YEAR + '.</div>';
         return;
     }
-    list.innerHTML = events.map(e => `<div class="adm-card" style="display:flex; justify-content:space-between; align-items:center;"><div><b>${e.t}</b> (${e.type})<br><span style="font-size:10px; color:#666">${e.d} ${e.m || ''} / ${getEventYear(e)} | ${e.city} | ${e.status}</span></div><div style="display:flex; gap:5px;"><button class="btn-mini-adm" style="background:#3b82f6" onclick="editEvent(${e.id})"><i class="fas fa-pen"></i></button><button class="btn-mini-adm" style="background:#ef4444" onclick="delEvent(${e.id})"><i class="fas fa-trash"></i></button></div></div>`).join('');
+    list.innerHTML = events.map(e => {
+        const labels = window.DHNDScoring.eventSeals(e).map(code => window.DHNDScoring.eventSealLabels[code]);
+        if (e.type === 'NON_OFFICIAL') labels.unshift('NÃO OFICIAL');
+        return `<div class="adm-card" style="display:flex; justify-content:space-between; align-items:center;"><div><b>${e.t}</b> (${labels.join(' • ')})<br><span style="font-size:10px; color:#666">${e.d} ${e.m || ''} / ${getEventYear(e)} | ${e.city} | ${e.status}</span></div><div style="display:flex; gap:5px;"><button class="btn-mini-adm" style="background:#3b82f6" onclick="editEvent(${e.id})"><i class="fas fa-pen"></i></button><button class="btn-mini-adm" style="background:#ef4444" onclick="delEvent(${e.id})"><i class="fas fa-trash"></i></button></div></div>`;
+    }).join('');
 }
 
 window.toggleQualifyInputs = function() {
@@ -6076,6 +6171,10 @@ window.toggleQualifyInputs = function() {
 };
 function clearEventForm() { 
     document.querySelectorAll('#adm-sec-events input').forEach(i => { if(i.type !== 'checkbox') { i.value = ''; localStorage.removeItem('autosave_' + i.id); } else { i.checked = false; localStorage.removeItem('autosave_' + i.id); } });
+    for (const field of eventSealFields()) {
+        field.value = '';
+        localStorage.removeItem('autosave_' + field.id);
+    }
     const yearField = document.getElementById('adm-evt-year');
     if (yearField) yearField.value = String(SYSTEM_YEAR);
     const scoringChoice = document.getElementById('adm-evt-points-enabled');
@@ -6119,6 +6218,10 @@ window.addEvent = function() {
     try { mapsUrl = normalizeEventMapsUrl(getVal('adm-evt-maps')); }
     catch (error) { btn.innerText = originalText; return toast(error.message, 'error'); }
     const evtType = getVal('adm-evt-type') || 'PE';
+    const seals = window.DHNDScoring.eventSeals({
+        type: evtType,
+        seals: eventSealFields().filter(field => !field.disabled).map(field => field.value)
+    });
     let extraVals = {};
     let newPoints = [], newQPoints = [];
     let hasQualify = false;
@@ -6163,6 +6266,7 @@ window.addEvent = function() {
     const evtObj = { 
         id: getVal('adm-evt-id-edit') ? parseInt(getVal('adm-evt-id-edit'), 10) : Date.now(), 
         t: t, d: d, m: getVal('adm-evt-month'), year: year, type: evtType, city: getVal('adm-evt-c').toUpperCase(), 
+        seals,
         val: geralVal, pix: getVal('adm-evt-pix'), status: getVal('adm-evt-status') || 'OPEN', 
         points: newPoints, qPoints: newQPoints, pointsEnabled: pointsEnabled, closeDate: getVal('adm-evt-close-date'), 
         startListDate: getVal('adm-evt-startlist-date'), open: true, img: null, gallery: [], 
@@ -6307,7 +6411,11 @@ window.editEvent = function(id) {
         setAndSave('adm-evt-v', e.val || ''); setAndSave('adm-evt-pix', e.pix || ''); setAndSave('adm-evt-status', e.status || 'OPEN'); setAndSave('adm-evt-close-date', e.closeDate || ''); setAndSave('adm-evt-startlist-date', e.startListDate || '');
         setAndSave('adm-evt-wpp', e.wpp || ''); 
         setAndSave('adm-evt-maps', e.mapsUrl || '');
-        if(e.m) setAndSave('adm-evt-month', e.m); if(e.type) setAndSave('adm-evt-type', e.type);
+        if (e.m) setAndSave('adm-evt-month', e.m);
+        const type = e.type || 'PE';
+        setAndSave('adm-evt-type', type);
+        const additionalSeals = window.DHNDScoring.eventSeals(e).filter(seal => seal !== type);
+        eventSealFields().forEach((field, index) => setAndSave(field.id, additionalSeals[index] || ''));
         if (e.type === 'NON_OFFICIAL') {
             if(e.extraVals) {
                 setAndSave('adm-evt-v-elite', e.extraVals['ELITE'] || '');

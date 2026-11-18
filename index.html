@@ -33,7 +33,7 @@
     <link rel="apple-touch-icon" href="logo.png?v=16">
     
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" media="print" onload="this.media='all'">
-    <link rel="stylesheet" href="style.css?v=160">
+    <link rel="stylesheet" href="style.css?v=161">
     <link rel="stylesheet" href="direct-timing.css?v=3"> 
 </head>
 <body>
@@ -223,9 +223,10 @@
                     <div><button class="btn-mini-adm btn-print-pdf" style="background:#0038a8; color:white; border:none; padding:6px 12px; border-radius:4px; font-weight:bold; font-size:10px; cursor:pointer; margin:0;" onclick="compartilharResultados('tempos')"><i class="fas fa-share-alt"></i> COMPARTILHAR / PDF</button></div>
                 </div>
                 <div class="filter-row" style="margin-top:5px; display:grid; grid-template-columns: 1fr 1fr; gap:5px;">
-                    <select id="filter-region-tempos" onchange="renderContent('tempos')" style="font-size:11px; padding:8px; background:#fff3e0; border-color:#ffa000; color:#e65100; font-weight:bold;">
-                        <option value="PE">APENAS PERNAMBUCO</option>
+                    <select id="filter-region-tempos" aria-label="Classificação ou estado do atleta" onchange="this.dataset.preferredRegion = this.value; renderContent('tempos')" style="font-size:11px; padding:8px; background:#fff3e0; border-color:#ffa000; color:#e65100; font-weight:bold;">
+                        <option value="PE">PERNAMBUCO (FPC)</option>
                         <option value="NORDESTE">RANKING NORDESTE (GERAL)</option>
+                        <optgroup id="filter-states-tempos" label="ESTADOS DOS ATLETAS" hidden></optgroup>
                     </select>
                     <select id="filter-evt-tempos" onchange="renderContent('tempos')" style="font-size:11px; padding:8px;"><option value="ALL">ETAPAS</option></select>
                     <select id="filter-type-tempos" onchange="renderContent('tempos')" style="font-size:11px; padding:8px; font-weight:bold; color:var(--pe-blue); grid-column: span 2;">
@@ -247,9 +248,10 @@
                     <div><button class="btn-mini-adm btn-print-pdf" style="background:#0038a8; color:white; border:none; padding:6px 12px; border-radius:4px; font-weight:bold; font-size:10px; cursor:pointer; margin:0;" onclick="compartilharResultados('ranking')"><i class="fas fa-share-alt"></i> COMPARTILHAR / PDF</button></div>
                 </div>
                 <div class="filter-row" style="margin-top:5px; display:flex; flex-direction:column; gap:5px;">
-                    <select id="filter-region-ranking" onchange="renderContent('ranking')" style="padding:10px; font-size:12px; font-weight:900; background:#fff3e0; border:2px solid #ffa000; color:#e65100; border-radius:6px;">
-                        <option value="PE">🏆 PERNAMBUCO</option>
+                    <select id="filter-region-ranking" aria-label="Classificação ou estado do atleta" onchange="this.dataset.preferredRegion = this.value; renderContent('ranking')" style="padding:10px; font-size:12px; font-weight:900; background:#fff3e0; border:2px solid #ffa000; color:#e65100; border-radius:6px;">
+                        <option value="PE">🏆 PERNAMBUCO (FPC)</option>
                         <option value="NORDESTE">🌎 RANKING NORDESTE</option>
+                        <optgroup id="filter-states-ranking" label="ESTADOS DOS ATLETAS" hidden></optgroup>
                     </select>
                     <div style="display:flex; gap:5px;">
                         <select id="filter-mode-ranking" onchange="renderContent('ranking')" style="flex:0.8; font-weight:bold; color:var(--pe-blue); background:#eef2ff; border:1px solid #c7d2fe; border-radius:4px; padding:5px; font-size:11px;">
@@ -433,8 +435,27 @@
                         
                         <div style="display:grid; grid-template-columns: 1fr 1fr; gap:5px; margin-top:5px">
                             <div><label style="font-size:9px">MÊS</label><select id="adm-evt-month"><option value="JAN">JAN</option><option value="FEV">FEV</option><option value="MAR">MAR</option><option value="ABR">ABR</option><option value="MAI">MAI</option><option value="JUN">JUN</option><option value="JUL">JUL</option><option value="AGO">AGO</option><option value="SET">SET</option><option value="OUT">OUT</option><option value="NOV">NOV</option><option value="DEZ">DEZ</option></select></div>
-                            <div><label style="font-size:9px">TIPO</label><select id="adm-evt-type" onchange="toggleEventType()"><option value="PE">FPC/PE (AZUL)</option><option value="CBC">CBC (DOURADO)</option><option value="NON_OFFICIAL">NÃO OFICIAL</option></select></div>
+                            <div><label for="adm-evt-type" style="font-size:9px">TIPO</label><select id="adm-evt-type" onchange="toggleEventType()"><option value="PE">FPC/PE (AZUL)</option><option value="CBC">CBC (DOURADO)</option><option value="NE">NORDESTE</option><option value="PB">PARAÍBA</option><option value="NON_OFFICIAL">NÃO OFICIAL</option></select></div>
                         </div>
+
+                        <fieldset style="min-width:0; margin:8px 0; padding:8px; background:#f8fafc; border:1px solid #cbd5e1; border-radius:6px;">
+                            <legend style="font-size:11px; font-weight:bold;">SELOS DO EVENTO</legend>
+                            <p id="adm-evt-seal-help" style="font-size:11px; margin:0 0 6px; color:#475569;">O tipo selecionado já conta como um selo. Você pode acrescentar mais dois.</p>
+                            <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,130px),1fr)); gap:5px;">
+                                <div>
+                                    <label for="adm-evt-seal-1" style="font-size:10px;">SELO 1</label>
+                                    <select id="adm-evt-seal-1" onchange="toggleEventType()"><option value="">Nenhum</option><option value="PE">FPC/PE</option><option value="CBC">CBC</option><option value="NE">Nordeste</option><option value="PB">Paraíba</option></select>
+                                </div>
+                                <div>
+                                    <label for="adm-evt-seal-2" style="font-size:10px;">SELO 2</label>
+                                    <select id="adm-evt-seal-2" onchange="toggleEventType()"><option value="">Nenhum</option><option value="PE">FPC/PE</option><option value="CBC">CBC</option><option value="NE">Nordeste</option><option value="PB">Paraíba</option></select>
+                                </div>
+                                <div id="adm-evt-seal-third" style="display:none">
+                                    <label for="adm-evt-seal-3" style="font-size:10px;">SELO 3</label>
+                                    <select id="adm-evt-seal-3" onchange="toggleEventType()"><option value="">Nenhum</option><option value="PE">FPC/PE</option><option value="CBC">CBC</option><option value="NE">Nordeste</option><option value="PB">Paraíba</option></select>
+                                </div>
+                            </div>
+                        </fieldset>
                         
                         <div id="adm-evt-scoring-choice" style="display:none; margin-top:8px; padding:10px; background:#eef2ff; border:1px solid #c7d2fe; border-radius:6px;">
                             <label for="adm-evt-points-enabled" style="font-size:11px; font-weight:bold;">PONTUAÇÃO NO RANKING</label>
@@ -1702,11 +1723,11 @@ refreshListsOnly();
 <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-messaging-compat.js"></script>
 
 <script src="season-policy.js?v=1"></script>
-<script src="ranking-policy.js?v=1"></script>
+<script src="ranking-policy.js?v=2"></script>
 <script src="maintenance.js?v=5"></script>
 <script src="maintenance-admin.js?v=1"></script>
 <script src="roster-policy.js?v=1"></script>
-<script src="script.js?v=175"></script>
+<script src="script.js?v=176"></script>
 <script src="direct-timing.js?v=2"></script>
 
 </body>
