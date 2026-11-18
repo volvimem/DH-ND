@@ -179,6 +179,7 @@
                 verifiedIdentity = actor.key;
                 errorVisible = false;
                 publish({ready:true, enabled:policy.enabled, allowed, admin, message:policy.message,
+                    waitingForConnection:policy.enabled && actor.matches && !sdkConnected && !verifiedResume(),
                     loginRequested:allowed ? false : state.loginRequested});
             } catch (error) {
                 if (error.code === 'maintenance/stale') return;

@@ -49,11 +49,12 @@ let currentTab = 'calendar'; let loggedUser = null; let currentAdmSection = null
 let maintenanceDomReady = false;
 let maintenanceAppOpened = false;
 let maintenanceSavedSession = null;
+let maintenanceRestoringUser = null;
 function maintenanceAllowsApp() {
     return !window.dhndMaintenance || window.dhndMaintenance.guard();
 }
 function mainMaintenanceChanged(state) {
-    if (maintenanceDomReady && state.ready && maintenanceSavedSession) {
+    if (maintenanceDomReady && state.ready && !state.waitingForConnection && maintenanceSavedSession) {
         const saved = maintenanceSavedSession;
         maintenanceSavedSession = null;
         if (!state.enabled) {
@@ -68,8 +69,17 @@ function mainMaintenanceChanged(state) {
                 loggedUser = saved.user;
             }
         }
-        else if (auth && auth.currentUser && String(auth.currentUser.email || '').toLowerCase() === cleanCPF(saved.user.cpf) + '@dhpe.com.br') {
-            void finishLogin(cleanCPF(saved.user.cpf), saved.remember);
+        else if (state.allowed && auth?.currentUser && String(auth.currentUser.email || '').toLowerCase() === cleanCPF(saved.user.cpf) + '@dhpe.com.br') {
+            maintenanceRestoringUser = saved.user;
+            document.documentElement.setAttribute('data-dhnd-restoring', 'true');
+            void finishLogin(cleanCPF(saved.user.cpf), saved.remember, true).catch(() => false).finally(() => {
+                maintenanceRestoringUser = null;
+                document.documentElement.removeAttribute('data-dhnd-restoring');
+                if (!loggedUser) {
+                    window.dhndMaintenance.refreshIdentity();
+                    mostrarLoginInicial();
+                }
+            });
         }
     }
     if (!state.allowed) {
@@ -87,7 +97,7 @@ function mainMaintenanceChanged(state) {
     if (!maintenanceDomReady) return;
     if (database && !activeDatabaseRef) startDatabaseSync();
     if (loggedUser && !maintenanceAppOpened) initApp(true);
-    else if (!loggedUser) mostrarLoginInicial();
+    else if (!loggedUser && !maintenanceRestoringUser) mostrarLoginInicial();
 }
 let currentPayId = null;
 let currentFilterStatus = 'ALL'; let tempEvtIdExtra = null;
@@ -277,6 +287,34 @@ function checkCPFLive(input) {
     }
 }
 
+const appFeatureScripts = {
+    html2canvas:'https://html2canvas.hertzen.com/dist/html2canvas.min.js',
+    XLSX:'https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js'
+};
+const appFeatureRequests = new Map();
+function loadAppFeature(name) {
+    if (window[name]) return Promise.resolve(window[name]);
+    if (appFeatureRequests.has(name)) return appFeatureRequests.get(name);
+    const request = new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        const finish = () => {
+            clearTimeout(timer);
+            script.onload = script.onerror = null;
+            if (window[name]) resolve(window[name]);
+            else {
+                script.remove();
+                reject(new Error('A ferramenta não pôde ser carregada.'));
+            }
+        };
+        const timer = setTimeout(finish, 12000);
+        script.src = appFeatureScripts[name];
+        script.onload = script.onerror = finish;
+        document.head.append(script);
+    }).finally(() => appFeatureRequests.delete(name));
+    appFeatureRequests.set(name, request);
+    return request;
+}
+
 window.baixarImagem = function(elementId, fileName) {
     const element = document.getElementById(elementId);
     if (!element) return toast("ELEMENTO NÃO ENCONTRADO", "error");
@@ -289,7 +327,7 @@ window.baixarImagem = function(elementId, fileName) {
 
     toast("GERANDO IMAGEM EM ALTA QUALIDADE...");
     const options = { scale: 2, useCORS: true, backgroundColor: "#ffffff", logging: false, scrollY: -window.scrollY };
-    html2canvas(element, options).then(canvas => {
+    loadAppFeature('html2canvas').then(renderCanvas => renderCanvas(element, options)).then(canvas => {
         try {
             const imgData = canvas.toDataURL("image/png", 1.0);
             const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
@@ -536,7 +574,7 @@ try {
 // Modo de manutenção separado dos dados de temporada.
 window.dhndMaintenance = window.DHNDMaintenance.create({
     database, auth, databaseURL: firebaseConfig.databaseURL,
-    identity: () => loggedUser,
+    identity: () => loggedUser || maintenanceRestoringUser || maintenanceSavedSession?.user,
     onChange: state => { void Promise.resolve().then(() => mainMaintenanceChanged(window.dhndMaintenance.state || state)); },
     onLogin: () => mostrarLoginInicial(),
     onLogout: () => window.fazerLogout()
@@ -1521,6 +1559,7 @@ document.addEventListener("DOMContentLoaded", function() {
         mostrarLoginInicial();
     }
     
+    if (maintenanceSavedSession) window.dhndMaintenance.refreshIdentity();
     mainMaintenanceChanged(window.dhndMaintenance.state);
     const timeInput = document.getElementById('adm-res-val'); if(timeInput) timeInput.addEventListener('input', function() { window.mascaraTempo(this); });
     const qualifyCheck = document.getElementById('adm-evt-has-qualify'); if(qualifyCheck) qualifyCheck.addEventListener('change', toggleQualifyInputs);
@@ -1529,7 +1568,6 @@ document.addEventListener("DOMContentLoaded", function() {
     const inputEvtCity = document.getElementById('adm-evt-c');
     if(inputEvtCity) inputEvtCity.addEventListener('input', function() { localStorage.setItem('draft_evt_c', this.value); });
     
-    if ('serviceWorker' in navigator) { navigator.serviceWorker.ready.then((reg) => { reg.update(); }); }
 
     // ==========================================================
     // NOVO: AUTOCOMPLETE DE CIDADES VIA API OFICIAL DO IBGE (CUSTOMIZADO)
@@ -1769,7 +1807,7 @@ function selectAuthenticatedProfile(users, cpf, uid) {
 function loginProfileRoot() {
     return 'dhpe_v25_final_stable_fix';
 }
-async function finishLogin(cpfClean, remember) {
+async function finishLogin(cpfClean, remember, isRestoring = false) {
     const account = auth && auth.currentUser;
     const email = cpfClean + '@dhpe.com.br';
     const uid = account && account.uid;
@@ -1787,7 +1825,7 @@ async function finishLogin(cpfClean, remember) {
         if (cached.user?.uid === uid) result = cached;
     }
     if (!result.user) {
-        toast('LOGIN VALIDADO. CARREGANDO CADASTRO...', 'info');
+        if (!isRestoring) toast('LOGIN VALIDADO. CARREGANDO CADASTRO...', 'info');
         try {
             const token = await awaitWithTimeout(account.getIdToken(), 8000, 'profile/timeout', 'Tempo de autenticação esgotado');
             if (!sameSession()) return false;
@@ -1818,10 +1856,10 @@ async function finishLogin(cpfClean, remember) {
         return false;
     }
     if (!sameSession()) return false;
-    executeLogin(result.user, remember);
+    executeLogin(result.user, remember, isRestoring);
     return true;
 }
-function executeLogin(user, remember) { loggedUser = user;
+function executeLogin(user, remember, isRestoring = false) { loggedUser = user;
 if (window.dhndMaintenance) window.dhndMaintenance.refreshIdentity();
 try {
     const preferred = remember ? localStorage : sessionStorage;
@@ -1830,7 +1868,9 @@ try {
     preferred.setItem(SESS_KEY, JSON.stringify(user));
 } catch (_) {
     // O login continua válido nesta aba mesmo se o navegador não puder salvar a sessão.
-} toast("BEM-VINDO DE VOLTA!"); initApp(false);
+}
+if (!isRestoring) toast("BEM-VINDO DE VOLTA!");
+initApp(isRestoring);
 }
 window.fazerLogout = async function() {
     try {
@@ -1954,7 +1994,7 @@ if (btnAdm) {
         }
 
         // 2. AINDA NÃO RESPONDEU: mostra o aviso em todo login até ativar.
-        else if (Notification.permission === "default") {
+        else if (!isRestoring && Notification.permission === "default") {
 
             setTimeout(() => {
 
@@ -2010,7 +2050,7 @@ if (btnAdm) {
         }
 
         // 3. JÁ BLOQUEOU: continua lembrando em todo login.
-        else if (Notification.permission === "denied") {
+        else if (!isRestoring && Notification.permission === "denied") {
 
             setTimeout(() => {
 
@@ -3798,7 +3838,7 @@ window.populatePublicFilters = function(tab) {
             currentEvtId = selEvt.value;
         }
         
-        let evtHtml = tab === 'ranking' ? '<option value="ALL">GERAL (SOMA)</option>' : '<option value="ALL">TODAS AS ETAPAS</option>';
+        let evtHtml = tab === 'ranking' ? '<option value="ALL">GERAL (SOMA)</option>' : '<option value="ALL">TODAS AS ETAPAS</option><option value="YEAR_BEST">MELHORES DO ANO (SOMA OFICIAL)</option>';
         if (getSeasonEvents().length > 0) {
             getSeasonEvents().forEach(e => {
                 if (e.status !== 'CANCELLED' && (tab !== 'ranking' || window.DHNDScoring.isScoringEvent(e))) evtHtml += `<option value="${e.id}">${e.t}</option>`;
@@ -3812,6 +3852,11 @@ window.populatePublicFilters = function(tab) {
             selEvt.value = 'ALL';
             currentEvtId = 'ALL';
         }
+    }
+
+    if (tab === 'tempos') {
+        const runFilter = document.getElementById('filter-type-tempos');
+        if (runFilter) runFilter.disabled = currentEvtId === 'YEAR_BEST';
     }
 
     // 2. FILTRO DE CATEGORIAS
@@ -3829,7 +3874,7 @@ window.populatePublicFilters = function(tab) {
         catHtml += '<option value="ALL_SEP">TODAS (SEPARADAS POR CAT)</option>';
         
         let catsToShow = [];
-        if (currentEvtId !== 'ALL') {
+        if (currentEvtId !== 'ALL' && currentEvtId !== 'YEAR_BEST') {
             const evtObj = db.events.find(e => String(e.id) === String(currentEvtId));
             if (evtObj && evtObj.type === 'NON_OFFICIAL' && evtObj.extraVals) {
                 catsToShow = Object.keys(evtObj.extraVals).filter(k => evtObj.extraVals[k] && String(evtObj.extraVals[k]).trim() !== "");
@@ -4047,17 +4092,20 @@ let imgHtml = e.img ? `<img src="${e.img}" class="evt-img-standard">` : `<div cl
              populatePublicFilters(t);
              const fEvt = document.getElementById('filter-evt-'+t).value;
              const fCat = document.getElementById('filter-cat-'+t).value; const fType = document.getElementById('filter-type-tempos').value; const fRegion = document.getElementById('filter-region-tempos').value;
+             const stages = new Map(getSeasonEvents().filter(event => event.status !== 'CANCELLED')
+                 .map((event, index) => [String(event.id), {event, index}]));
              let allTimes = getSeasonTimes();
-             if (fEvt && fEvt !== 'ALL') allTimes = allTimes.filter(i => String(i.evtId) === String(fEvt));
+             if (fEvt === 'ALL') allTimes = allTimes.filter(time => stages.has(String(time.evtId)));
+             else if (fEvt && fEvt !== 'YEAR_BEST') allTimes = allTimes.filter(time => String(time.evtId) === fEvt);
              if (fCat && fCat !== 'ALL' && fCat !== 'ALL_SEP') allTimes = allTimes.filter(i => window.normalizeCatName(i.cat) === window.normalizeCatName(fCat));
              if (fRegion === 'PE') allTimes = allTimes.filter(t => { const u = db.users.find(user => user.cpf === t.cpf); return u && (u.uf === 'PE' || !u.uf || u.filiadoPE === true); });
             
              // ==========================================================
-// TODAS AS ETAPAS = MELHORES DO ANO
+// MELHORES DO ANO
 // Soma o MENOR tempo OFICIAL de cada etapa oficial
 // para cada atleta.
 // ==========================================================
-if (fEvt === 'ALL') {
+if (fEvt === 'YEAR_BEST') {
 
     const eventosOficiais = getSeasonEvents().filter(e =>
         e &&
@@ -4072,7 +4120,7 @@ if (fEvt === 'ALL') {
         eventoOficialPorId[String(e.id)] = e;
     });
 
-    // Para "Todas as Etapas", usamos somente tempos OFICIAIS.
+    // A soma anual usa somente tempos oficiais.
     const temposOficiais = allTimes.filter(t => {
 
         if (!t) return false;
@@ -4974,7 +5022,7 @@ if (fEvt === 'ALL') {
              allTimes.forEach(t => { 
                  const key = t.cpf + '_' + t.cat + '_' + t.evtId; 
                  if(!grouped[key]) { 
-                     const evtObj = db.events.find(e => String(e.id) === String(t.evtId)); 
+                     const evtObj = stages.get(String(t.evtId))?.event; 
                      grouped[key] = { cpf: t.cpf, name: t.name, city: t.city, cat: t.cat, evtId: t.evtId, evtName: evtObj ? evtObj.t : "ETAPA", q: '--:--.---', o: '--:--.---', s: '--:--.---', num: "" }; 
                  } 
                  if(t.num) grouped[key].num = t.num; // Pega a placa
@@ -4993,47 +5041,33 @@ if (fEvt === 'ALL') {
                  "JUNIOR", "SUB-30", "ELITE"
              ];
 
-             if(fType !== 'ALL') { 
-                 sortedList = sortedList.filter(item => { if(fType === 'qualify') return item.q !== '--:--.---'; if(fType === '1st') return item.o !== '--:--.---'; if(fType === '2nd') return item.s !== '--:--.---'; return true; });
-                 sortedList.sort((a,b) => { 
-                     if (fCat === 'ALL_SEP' && a.cat !== b.cat) {
-                         let indexA = ordemDesejadaTempos.indexOf(a.cat.toUpperCase().trim());
-                         let indexB = ordemDesejadaTempos.indexOf(b.cat.toUpperCase().trim());
-                         if (indexA === -1) indexA = 999;
-                         if (indexB === -1) indexB = 999;
-                         if (indexA !== indexB) return indexA - indexB;
-                         return a.cat.localeCompare(b.cat);
-                     }
-                     let tA = (fType === 'qualify') ? a.q : (fType === '1st' ? a.o : a.s); 
-                     let tB = (fType === 'qualify') ? b.q : (fType === '1st' ? b.o : b.s); 
-                     return tA.localeCompare(tB); 
-                 });
-             } else { 
-                 sortedList.sort((a,b) => { 
-                     if (fCat === 'ALL_SEP' && a.cat !== b.cat) {
-                         let indexA = ordemDesejadaTempos.indexOf(a.cat.toUpperCase().trim());
-                         let indexB = ordemDesejadaTempos.indexOf(b.cat.toUpperCase().trim());
-                         if (indexA === -1) indexA = 999;
-                         if (indexB === -1) indexB = 999;
-                         if (indexA !== indexB) return indexA - indexB;
-                         return a.cat.localeCompare(b.cat);
-                     }
-                     const tA = a.o !== '--:--.---' ? a.o : (a.q !== '--:--.---' ? a.q : a.s); 
-                     const tB = b.o !== '--:--.---' ? b.o : (b.q !== '--:--.---' ? b.q : b.s); 
-                     return tA.localeCompare(tB); 
-                 });
-             }
-             
-             let temposLideres = {};
+             const noTime = '--:--.---';
+             const timeFor = item => fType === 'qualify' ? item.q : (fType === '1st' ? item.o : (fType === '2nd' ? item.s :
+                 (item.o !== noTime ? item.o : (item.q !== noTime ? item.q : item.s))));
+             const scopeFor = item => JSON.stringify([String(item.evtId), fCat === 'ALL_SEP' ? item.cat : 'GERAL']);
+             if (fType !== 'ALL') sortedList = sortedList.filter(item => timeFor(item) !== noTime);
+             sortedList.sort((a, b) => {
+                 const stageOrder = (stages.get(String(a.evtId))?.index ?? 0) - (stages.get(String(b.evtId))?.index ?? 0);
+                 if (stageOrder) return stageOrder;
+                 if (fCat === 'ALL_SEP' && a.cat !== b.cat) {
+                     const orderA = ordemDesejadaTempos.indexOf(a.cat.toUpperCase().trim());
+                     const orderB = ordemDesejadaTempos.indexOf(b.cat.toUpperCase().trim());
+                     const categoryOrder = (orderA < 0 ? 999 : orderA) - (orderB < 0 ? 999 : orderB);
+                     return categoryOrder || a.cat.localeCompare(b.cat);
+                 }
+                 return timeFor(a).localeCompare(timeFor(b));
+             });
+
+             const temposLideres = new Map();
+             const positions = new Map();
              sortedList.forEach(item => {
-                 let tA = (fType === 'qualify') ? item.q : (fType === '1st' ? item.o : (fType === '2nd' ? item.s : (item.o !== '--:--.---' ? item.o : (item.q !== '--:--.---' ? item.q : item.s))));
-                 let ms = tempoParaMilissegundos(tA);
-                 let catKey = fCat === 'ALL_SEP' ? item.cat : 'GERAL';
-                 if (!temposLideres[catKey] || ms < temposLideres[catKey]) temposLideres[catKey] = ms;
+                 const scope = scopeFor(item);
+                 const ms = tempoParaMilissegundos(timeFor(item));
+                 temposLideres.set(scope, Math.min(ms, temposLideres.get(scope) ?? Infinity));
              });
              const evtObjH = db.events.find(e => String(e.id) === String(fEvt)); const evtNameHeader = fEvt === 'ALL' ? 'TODAS AS ETAPAS' : (evtObjH ? evtObjH.t : 'ETAPA'); const catNameHeader = fCat === 'ALL' ? 'MELHORES DA PISTA' : (fCat === 'ALL_SEP' ? 'GERAL SEPARADA (POR CATEGORIA)' : fCat);
              const regionNameHeader = fRegion === 'PE' ? 'RESULTADO PERNAMBUCO' : 'RESULTADO NORDESTE (OPEN)'; const typeNameHeader = fType === 'ALL' ? 'GERAL (TODAS AS DESCIDAS)' : (fType === 'qualify' ? 'QUALIFY' : (fType === '1st' ? '1ª DESCIDA (OFICIAL)' : '2ª DESCIDA'));
-             const headerTag = `<div class="print-header" style="background: linear-gradient(135deg, var(--pe-blue), #1e3a8a); color: white; padding: 15px; border-radius: 8px; margin-bottom: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center;"><h2 style="margin: 0; font-size: 18px; font-weight: 900; text-transform: uppercase;">RESULTADOS OFICIAIS</h2><div style="font-size: 11px; margin-top: 5px; opacity: 0.9; font-weight: bold;"><i class="fas fa-map-marker-alt"></i> ${regionNameHeader} &nbsp;|&nbsp; <i class="fas fa-bicycle"></i> ${catNameHeader}</div><div style="font-size: 11px; margin-top: 5px; opacity: 0.9; font-weight: bold;"><i class="fas fa-stopwatch"></i> ${typeNameHeader}</div><div style="font-size: 12px; margin-top: 5px; color: #ffe500; font-weight: bold;">${evtNameHeader}</div></div>`;
+             const headerTag = `<div class="print-header" style="background: linear-gradient(135deg, var(--pe-blue), #1e3a8a); color: white; padding: 15px; border-radius: 8px; margin-bottom: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center;"><h2 style="margin: 0; font-size: 18px; font-weight: 900; text-transform: uppercase;">${fEvt === 'ALL' ? 'RESULTADOS POR ETAPA' : 'RESULTADOS OFICIAIS'}</h2><div style="font-size: 11px; margin-top: 5px; opacity: 0.9; font-weight: bold;"><i class="fas fa-map-marker-alt"></i> ${regionNameHeader} &nbsp;|&nbsp; <i class="fas fa-bicycle"></i> ${catNameHeader}</div><div style="font-size: 11px; margin-top: 5px; opacity: 0.9; font-weight: bold;"><i class="fas fa-stopwatch"></i> ${typeNameHeader}</div><div style="font-size: 12px; margin-top: 5px; color: #ffe500; font-weight: bold;">${evtNameHeader}</div></div>`;
              if(sortedList.length === 0) listDiv.innerHTML = headerTag + '<div style="padding:20px; text-align:center; color:#999; font-size:11px">Nenhum resultado para os filtros selecionados.</div>';
              else {
                  const has2nd = sortedList.some(item => item.s && item.s !== '--:--.---');
@@ -5046,30 +5080,27 @@ if (fEvt === 'ALL') {
                      let placaStr = userObj ? getPlacaAtletaEvento(userObj, r.evtId) : (r.num || "");
                      let placaHtml = placaStr ? `<span style="background:#1e293b; color:white; font-size:11px; font-weight:900; padding:2px 6px; border-radius:4px; margin-left:5px; -webkit-print-color-adjust: exact; print-color-adjust: exact;">#${placaStr}</span>` : "";
 
+                     const scope = scopeFor(r);
+                     const position = (positions.get(scope) || 0) + 1;
+                     positions.set(scope, position);
+                     const posDisplay = position + 'º';
                      let catHeader = '';
-                     let posDisplay = (i + 1) + 'º';
                      if (fCat === 'ALL_SEP') {
-                         if (i === 0 || sortedList[i-1].cat !== r.cat) {
+                         if (i === 0 || scopeFor(sortedList[i - 1]) !== scope) {
                              let closeTag = i > 0 ? '</div></div>' : '';
-                             catHeader = `${closeTag}<div class="cat-print-page" style="margin-bottom: 30px; border: 2px solid var(--pe-blue); border-radius: 8px; background: #fff; overflow: hidden; page-break-inside: avoid; break-inside: avoid;"><div class="cat-title-box" style="background: var(--pe-blue); color: white; padding: 10px; font-size: 16px; font-weight: 900; text-align: center; text-transform: uppercase; letter-spacing: 1px; -webkit-print-color-adjust: exact; print-color-adjust: exact;">🏆 ${r.cat}</div><div style="padding: 10px; display: flex; flex-direction: column; gap: 8px;">`;
+                             catHeader = `${closeTag}<div class="cat-print-page" style="margin-bottom: 30px; border: 2px solid var(--pe-blue); border-radius: 8px; background: #fff; overflow: hidden; page-break-inside: avoid; break-inside: avoid;"><div class="cat-title-box" style="background: var(--pe-blue); color: white; padding: 10px; font-size: 16px; font-weight: 900; text-align: center; text-transform: uppercase; letter-spacing: 1px; -webkit-print-color-adjust: exact; print-color-adjust: exact;">🏆 ${fEvt === 'ALL' ? r.evtName + ' · ' : ''}${r.cat}</div><div style="padding: 10px; display: flex; flex-direction: column; gap: 8px;">`;
                          }
-                         let catIndex = 0;
-                         for (let j = 0; j < i; j++) { if (sortedList[j].cat === r.cat) catIndex++; }
-                         posDisplay = (catIndex + 1) + 'º';
                      }
-                     
-                     let tA = (fType === 'qualify') ? r.q : (fType === '1st' ? r.o : (fType === '2nd' ? r.s : (r.o !== '--:--.---' ? r.o : (r.q !== '--:--.---' ? r.q : r.s))));
-                     let msAtleta = tempoParaMilissegundos(tA);
-                     let catKey = fCat === 'ALL_SEP' ? r.cat : 'GERAL';
-                     
-                     let gapStr = (msAtleta !== Infinity && msAtleta > temposLideres[catKey]) ? formatarDiferenca(msAtleta - temposLideres[catKey]) : '';
-                     
+
+                     const msAtleta = tempoParaMilissegundos(timeFor(r));
+                     const lead = temposLideres.get(scope);
+                     const gapStr = msAtleta !== Infinity && msAtleta > lead ? formatarDiferenca(msAtleta - lead) : '';
+
                      let gapPrevStr = '';
                      if (i > 0 && msAtleta !== Infinity) {
                          let prevR = sortedList[i-1];
-                         if (fCat !== 'ALL_SEP' || prevR.cat === r.cat) {
-                             let tPrev = (fType === 'qualify') ? prevR.q : (fType === '1st' ? prevR.o : (fType === '2nd' ? prevR.s : (prevR.o !== '--:--.---' ? prevR.o : (prevR.q !== '--:--.---' ? prevR.q : prevR.s))));
-                             let msPrev = tempoParaMilissegundos(tPrev);
+                         if (scopeFor(prevR) === scope) {
+                             const msPrev = tempoParaMilissegundos(timeFor(prevR));
                              if (msPrev !== Infinity && msAtleta > msPrev) {
                                  gapPrevStr = formatarDiferenca(msAtleta - msPrev);
                              }
@@ -6424,8 +6455,9 @@ window.gerarExcelCBC = function() {
     if(btnClicado && btnClicado.tagName === 'BUTTON') { btnClicado.disabled = true;
     btnClicado.innerHTML = '<i class="fas fa-spinner fa-spin"></i> GERANDO...'; } 
     toast("PROCESSANDO PLANILHA...", "info");
-    setTimeout(() => {
+    setTimeout(async () => {
         try {
+            if (typeof XLSX === 'undefined') await loadAppFeature('XLSX');
             let temposEvt = db.tempos.filter(t => String(t.evtId) === String(evtId));
             let pilotResults = {};
             temposEvt.forEach(t => {
@@ -6900,9 +6932,10 @@ window.gerarExcelLargada = function(selection = null) {
     };
 
 
-    setTimeout(() => {
+    setTimeout(async () => {
 
         try {
+            if (typeof XLSX === 'undefined') await loadAppFeature('XLSX');
 
             let inscritos = [];
 
@@ -7558,6 +7591,7 @@ window.importarExcelTempos = function(event) {
     
     reader.onload = async function(e) {
         try {
+            if (typeof XLSX === 'undefined') await loadAppFeature('XLSX');
             const data = new Uint8Array(e.target.result);
             const workbook = XLSX.read(data, {type: 'array'});
             const firstSheetName = workbook.SheetNames[0];
@@ -8307,8 +8341,7 @@ window.closeInstallBanner = () => { const banner = document.getElementById('pwa-
 if ('serviceWorker' in navigator) { 
     window.addEventListener('load', () => { 
         navigator.serviceWorker.register('./sw.js').then((reg) => { 
-            console.log('[SW] Registrado com Sucesso:', reg.scope); 
-            reg.update();
+            console.log('[SW] Registrado com Sucesso:', reg.scope);
         }).catch((err) => { 
             console.error('[SW] Erro no registro:', err); 
         }); 

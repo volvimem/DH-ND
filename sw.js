@@ -114,25 +114,62 @@ self.addEventListener("notificationclick", (event) => {
 // ==========================================================
 // PARTE 2: PWA E CACHE
 // ==========================================================
-const CACHE_NAME = 'dhnd-timing-queue-resume-20261118';
+const CACHE_NAME = 'dhnd-results-quick-start-20261118';
+const APP_SCOPE = new URL(self.registration.scope);
+const STATIC_CACHE_PREFIX = `dhnd-official-static:${APP_SCOPE.href}:`;
+const STATIC_CACHE = STATIC_CACHE_PREFIX + CACHE_NAME;
+
+const PUBLIC_FILES = new Set([
+    'script.js', 'style.css', 'direct-timing.js', 'direct-timing.css',
+    'season-policy.js', 'ranking-policy.js', 'maintenance.js', 'maintenance-admin.js',
+    'roster-policy.js', 'dhclub.js', 'dhclub.css', 'manifest.json', 'logo.png'
+]);
+const PUBLIC_CDN = [
+    /^https:\/\/www\.gstatic\.com\/firebasejs\/9\.(?:6\.1|7\.0)\/firebase-(?:app|auth|database|storage|messaging|functions)-compat\.js$/,
+    /^https:\/\/cdnjs\.cloudflare\.com\/ajax\/libs\/font-awesome\/6\.5\.[12]\/(?:css\/all\.min\.css|webfonts\/fa-(?:solid-900|regular-400|brands-400)\.woff2)$/,
+    'https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js'
+];
+
+function isPublicAsset(request) {
+    if (request.method !== 'GET' || request.mode === 'navigate' ||
+        request.headers.has('authorization') || request.headers.has('range')) return false;
+
+    const url = new URL(request.url);
+    if (url.origin === APP_SCOPE.origin) {
+        if (!url.pathname.startsWith(APP_SCOPE.pathname) || !/^\?v=\d+$/.test(url.search)) return false;
+        return PUBLIC_FILES.has(url.pathname.slice(APP_SCOPE.pathname.length));
+    }
+    return PUBLIC_CDN.some(pattern => typeof pattern === 'string' ? url.href === pattern : pattern.test(url.href));
+}
+
+async function getPublicAsset(request) {
+    const cache = await caches.open(STATIC_CACHE).catch(() => null);
+    const cached = await cache?.match(request).catch(() => null);
+    if (cached) return {response:cached};
+
+    const response = await fetch(request);
+    const canStore = cache && !response.redirected && (response.ok || response.type === 'opaque');
+    return {response, cache, copy:canStore ? response.clone() : null};
+}
 
 self.addEventListener('install', (event) => {
-    self.skipWaiting(); 
+    event.waitUntil(self.skipWaiting());
 });
 
 self.addEventListener('activate', (event) => {
-    event.waitUntil(
-        caches.keys().then((keys) => {
-            return Promise.all(keys.map(key => caches.delete(key)));
-        })
-    );
-    self.clients.claim(); 
+    event.waitUntil((async () => {
+        const keys = await caches.keys();
+        await Promise.all(keys.filter(key => key.startsWith(STATIC_CACHE_PREFIX) && key !== STATIC_CACHE)
+            .map(key => caches.delete(key)));
+        await self.clients.claim();
+    })());
 });
 
 self.addEventListener('fetch', (event) => {
-    event.respondWith(
-        fetch(event.request).catch(() => {
-            return new Response(); 
-        })
-    );
+    const request = event.request;
+    if (!isPublicAsset(request)) return;
+
+    const result = getPublicAsset(request);
+    event.respondWith(result.then(value => value.response));
+    event.waitUntil(result.then(({cache, copy}) => copy ? cache.put(request, copy) : undefined).catch(() => {}));
 });

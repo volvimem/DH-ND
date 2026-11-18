@@ -2,13 +2,17 @@
 <html lang="pt-br" data-dhnd-maintenance="pending">
 <head>
     <style>
+        #dhnd-startup { display:none; position:fixed; inset:0; z-index:2147483646; place-content:center; gap:.5rem; background:#f8fafc; color:#124199; text-align:center; font:700 1rem/1.3 system-ui,sans-serif; }
+        #dhnd-startup strong { font-size:1.5rem; }
+        #dhnd-startup span { font-size:.875rem; color:#475569; }
+        html[data-dhnd-maintenance="pending"] #dhnd-startup,
+        html[data-dhnd-maintenance="allowed"][data-dhnd-restoring="true"] #dhnd-startup { display:grid; }
         html[data-dhnd-maintenance="blocked"] body > :not(#dhnd-maintenance-gate),
-        html[data-dhnd-maintenance="pending"] body > :not(#main-app-container):not(#dhnd-maintenance-gate) { visibility: hidden; }
-        html[data-dhnd-maintenance="pending"] #screen-login { display: flex; pointer-events: none; }
-        html[data-dhnd-maintenance="pending"] #main-app-container > :not(#screen-login),
+        html[data-dhnd-maintenance="pending"] body > :not(#dhnd-startup):not(#dhnd-maintenance-gate),
+        html[data-dhnd-maintenance="allowed"][data-dhnd-restoring="true"] body > :not(#dhnd-startup) { visibility:hidden; }
         html[data-dhnd-maintenance="login"] #screen-app,
         html[data-dhnd-maintenance="login"] #main-nav-bar,
-        html[data-dhnd-maintenance="login"] #main-app-header { display: none !important; }
+        html[data-dhnd-maintenance="login"] #main-app-header { display:none !important; }
     </style>
     <meta charset="UTF-8">
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
@@ -28,15 +32,12 @@
     <link rel="icon" type="image/png" href="logo.png?v=16">
     <link rel="apple-touch-icon" href="logo.png?v=16">
     
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-    <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
-    
-    <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
-    
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" media="print" onload="this.media='all'">
     <link rel="stylesheet" href="style.css?v=160">
     <link rel="stylesheet" href="direct-timing.css?v=3"> 
 </head>
 <body>
+<div id="dhnd-startup" role="status"><strong>DH-ND</strong><span>Abrindo o app…</span></div>
 
 <div id="archive-badge-display" class="archive-badge" style="display:none;">MODO HISTÓRICO (SOMENTE LEITURA)</div>
 
@@ -60,10 +61,10 @@
 
 <div class="app-container" id="main-app-container">
     
-    <div id="screen-login" class="screen active">
+    <div id="screen-login" class="screen">
         <div class="login-overlay-layer"></div>
         <div class="login-content-layer">
-            <img src="logo.png" class="login-logo-img" alt="Logo">
+            <img src="logo.png?v=16" decoding="async" fetchpriority="low" class="login-logo-img" alt="Logo">
             <h1>CAMPEONATO NORDESTE DE DOWNHILL</h1>
             <span class="login-season-text">TEMPORADA <span id="lbl-season-year">...</span></span>
         
@@ -148,7 +149,7 @@
 
     <div id="screen-app" class="screen">
         <div id="main-app-header" class="app-header">
-            <div class="header-logo-text"><img src="logo.png" class="header-mini-logo"></div>
+            <div class="header-logo-text"><img src="logo.png?v=16" decoding="async" fetchpriority="low" class="header-mini-logo"></div>
             <div style="display:flex; align-items:center; gap:8px;">
                  <a href="#" id="btn-support-header" class="header-support-btn" onclick="updateSupportLink()"><i class="fab fa-whatsapp"></i> SUPORTE</a>
                  
@@ -298,7 +299,7 @@
                         <p style="font-size:10px; margin-top:5px; opacity:0.8;">Aguardando liberação da organização.</p>
                     </div>
                     <div class="id-card-header">
-                        <img src="logo.png">
+                        <img src="logo.png?v=16" decoding="async" fetchpriority="low">
                         <span>FEDERAÇÃO BRASILEIRA</span>
                     </div>
                     <div class="id-card-body">
@@ -819,7 +820,7 @@
 </div>
 
 <div class="modal-overlay" id="modal-lock-alert"><div class="modal-box" style="text-align:center; border-top: 5px solid #d50000;"><div style="background:#fee2e2; width:70px; height:70px; border-radius:50%; display:flex; align-items:center; justify-content:center; margin:0 auto 15px auto; box-shadow: 0 4px 10px rgba(213,0,0,0.2);"><i class="fas fa-user-lock" style="font-size:30px; color:#d50000;"></i></div><h3 style="color:#d50000; margin-bottom:5px; text-transform:uppercase;">INSCRIÇÃO RESTRITA</h3><b style="font-size:12px; color:#333;">CATEGORIA OFICIAL</b><p style="font-size:13px; color:#666; margin:15px 0; line-height:1.5;">Sua <b>Carteirinha Digital</b> ainda não foi ativada pela organização.<br><br>Aguarde a liberação para se inscrever na categoria oficial ou participe das categorias abertas.</p><button class="btn" onclick="redirectFromLockToExtra()" style="background:var(--pe-yellow); color:black; font-weight:900; box-shadow:0 4px 10px rgba(255, 229, 0, 0.3);"><i class="fas fa-star"></i> IR PARA NÃO OFICIAIS</button><button class="btn" onclick="fecharModal('modal-lock-alert')" style="background:#f1f5f9; color:#64748b; margin-top:10px; border:1px solid #cbd5e1;">ENTENDI, VOU AGUARDAR</button></div></div>
-<div class="modal-overlay" id="modal-share"><div class="modal-box" style="background:transparent; box-shadow:none; border:none; width:auto; padding:0; display:flex; flex-direction:column; align-items:center;"><div id="ticket-capture-area" class="ticket-visual"><div class="ticket-header"><img src="logo.png" class="ticket-logo-main"><div class="ticket-header-text"><span>CAMPEONATO NORDESTE</span><b>COMPROVANTE OFICIAL <span id="ticket-year-display"></span></b></div><img src="logo_cbc.png" class="ticket-logo-cbc" onerror="this.style.display='none'"></div><div class="ticket-body"><div class="ticket-row"><span class="ticket-label">EVENTO</span><b class="ticket-value-lg" id="share-event-name">...</b></div><div class="ticket-row"><span class="ticket-label">DATA & LOCAL</span><b class="ticket-value" id="share-event-details">...</b></div><div class="ticket-divider"></div><div class="ticket-row"><span class="ticket-label">ATLETA</span><b class="ticket-value-lg" id="share-piloto-name">...</b></div><div class="ticket-row"><span class="ticket-label">CATEGORIA & ORIGEM</span><b class="ticket-value" id="share-piloto-details">...</b></div><div class="ticket-status"><i class="fas fa-check-circle"></i> INSCRIÇÃO CONFIRMADA</div></div><div class="ticket-footer">APRESENTE ESTE COMPROVANTE NA RETIRADA DO KIT</div></div><div style="width: 100%; max-width: 320px; margin-top: 15px;"><button id="btn-ticket-download" class="btn" style="background:#E1306C; margin-bottom: 10px; box-shadow:0 10px 20px rgba(0,0,0,0.3); border: 2px solid white;" onclick="baixarImagem('ticket-capture-area', 'ticket_dh_nd')"><i class="fas fa-camera"></i> BAIXAR TICKET EM HD</button><button class="btn" style="background:white; color:#333" onclick="fecharModal('modal-share')">FECHAR</button></div></div></div>
+<div class="modal-overlay" id="modal-share"><div class="modal-box" style="background:transparent; box-shadow:none; border:none; width:auto; padding:0; display:flex; flex-direction:column; align-items:center;"><div id="ticket-capture-area" class="ticket-visual"><div class="ticket-header"><img src="logo.png?v=16" decoding="async" fetchpriority="low" class="ticket-logo-main"><div class="ticket-header-text"><span>CAMPEONATO NORDESTE</span><b>COMPROVANTE OFICIAL <span id="ticket-year-display"></span></b></div><img src="logo_cbc.png" class="ticket-logo-cbc" onerror="this.style.display='none'"></div><div class="ticket-body"><div class="ticket-row"><span class="ticket-label">EVENTO</span><b class="ticket-value-lg" id="share-event-name">...</b></div><div class="ticket-row"><span class="ticket-label">DATA & LOCAL</span><b class="ticket-value" id="share-event-details">...</b></div><div class="ticket-divider"></div><div class="ticket-row"><span class="ticket-label">ATLETA</span><b class="ticket-value-lg" id="share-piloto-name">...</b></div><div class="ticket-row"><span class="ticket-label">CATEGORIA & ORIGEM</span><b class="ticket-value" id="share-piloto-details">...</b></div><div class="ticket-status"><i class="fas fa-check-circle"></i> INSCRIÇÃO CONFIRMADA</div></div><div class="ticket-footer">APRESENTE ESTE COMPROVANTE NA RETIRADA DO KIT</div></div><div style="width: 100%; max-width: 320px; margin-top: 15px;"><button id="btn-ticket-download" class="btn" style="background:#E1306C; margin-bottom: 10px; box-shadow:0 10px 20px rgba(0,0,0,0.3); border: 2px solid white;" onclick="baixarImagem('ticket-capture-area', 'ticket_dh_nd')"><i class="fas fa-camera"></i> BAIXAR TICKET EM HD</button><button class="btn" style="background:white; color:#333" onclick="fecharModal('modal-share')">FECHAR</button></div></div></div>
 <div class="modal-overlay" id="modal-history"><div class="modal-box" style="text-align:left;"><h3 style="color:var(--pe-blue); border-bottom:1px solid #eee; padding-bottom:10px;">MEU HISTÓRICO</h3><div id="my-history-list" style="max-height:300px; overflow-y:auto; margin-top:10px;"></div><button class="btn" style="background:#ddd; color:#333; margin-top:15px" onclick="fecharModal('modal-history')">FECHAR</button></div></div>
 <div class="modal-overlay" id="modal-pix"><div class="modal-box"><h3 style="color:var(--pe-green)">PAGAMENTO</h3><p id="pix-valor-display"></p><div id="pix-copy" style="background:#eee; padding:10px; word-break:break-all; font-size:10px"></div><button class="btn" onclick="copiarPix()" style="background:#f1f5f9; color:#333; border: 1px solid #ccc; margin-bottom: 10px;"><i class="fas fa-copy"></i> COPIAR CHAVE PIX</button><button class="btn" id="btn-confirmar-insc" style="background:var(--pe-blue); margin-bottom: 5px;" onclick="confirmarInscricaoPendente()"><i class="fas fa-check"></i> CONFIRMAR INSCRIÇÃO</button><button class="btn" id="btn-ja-paguei" style="background:#25D366; margin-bottom: 5px;" onclick="enviarComprovanteWhatsApp()"><i class="fab fa-whatsapp"></i> ENVIAR COMPROVANTE</button><button class="btn" style="background:#ccc" onclick="fecharModal('modal-pix')">FECHAR JANELA</button></div></div>
 <div class="modal-overlay" id="modal-recovery">
@@ -1682,7 +1683,7 @@ refreshListsOnly();
 
 <div id="pwa-install-banner" class="pwa-install-banner">
     <div style="display:flex; align-items:center; gap:10px;">
-        <img src="logo.png" style="width:40px; height:40px; border-radius:8px;">
+        <img src="logo.png?v=16" decoding="async" fetchpriority="low" style="width:40px; height:40px; border-radius:8px;">
         <div style="text-align:left;">
             <b style="color:var(--pe-blue); font-size:12px; display:block;">Baixar App DH-ND</b>
             <span style="font-size:10px; color:#666;">Mais rápido e não gasta memória!</span>
@@ -1702,10 +1703,10 @@ refreshListsOnly();
 
 <script src="season-policy.js?v=1"></script>
 <script src="ranking-policy.js?v=1"></script>
-<script src="maintenance.js?v=3"></script>
+<script src="maintenance.js?v=4"></script>
 <script src="maintenance-admin.js?v=1"></script>
 <script src="roster-policy.js?v=1"></script>
-<script src="script.js?v=173"></script>
+<script src="script.js?v=174"></script>
 <script src="direct-timing.js?v=2"></script>
 
 </body>
