@@ -46,6 +46,36 @@ function getEventYear(event) {
 
 
 let currentTab = 'calendar'; let loggedUser = null; let currentAdmSection = null;
+let maintenanceDomReady = false;
+let maintenanceAppOpened = false;
+let maintenanceSavedSession = null;
+function maintenanceAllowsApp() {
+    return !window.dhndMaintenance || window.dhndMaintenance.guard();
+}
+function mainMaintenanceChanged(state) {
+    if (maintenanceDomReady && state.ready && maintenanceSavedSession) {
+        const saved = maintenanceSavedSession;
+        maintenanceSavedSession = null;
+        if (!state.enabled) loggedUser = saved.user;
+        else if (auth && auth.currentUser && String(auth.currentUser.email || '').toLowerCase() === cleanCPF(saved.user.cpf) + '@dhpe.com.br') {
+            void finishLogin(cleanCPF(saved.user.cpf), saved.remember);
+        }
+    }
+    if (!state.allowed) {
+        maintenanceAppOpened = false;
+        if (activeDatabaseRef) { activeDatabaseRef.off('value'); activeDatabaseRef = null; }
+        if (saveTimeout) clearTimeout(saveTimeout);
+        pendingSaves.clear();
+        document.querySelectorAll('.modal-overlay').forEach(el => { el.style.display = 'none'; });
+        if (window.liveTimingWindow && !window.liveTimingWindow.closed) window.liveTimingWindow.close();
+        if (state.loginRequested && maintenanceDomReady) mostrarLoginInicial();
+        return;
+    }
+    if (!maintenanceDomReady) return;
+    if (database && !activeDatabaseRef) startDatabaseSync();
+    if (loggedUser && !maintenanceAppOpened) initApp(true);
+    else if (!loggedUser) mostrarLoginInicial();
+}
 let currentPayId = null;
 let currentFilterStatus = 'ALL'; let tempEvtIdExtra = null;
 let currentInscricaoPendente = null; let currentGalleryList = []; let currentGalleryIndex = 0;
@@ -488,6 +518,14 @@ try {
 } catch (e) { db = DEFAULT_DB; }
 
 // ==========================================================
+// Modo de manutenção separado dos dados de temporada.
+window.dhndMaintenance = window.DHNDMaintenance.create({
+    database, auth, databaseURL: firebaseConfig.databaseURL,
+    identity: () => loggedUser,
+    onChange: state => { void Promise.resolve().then(() => mainMaintenanceChanged(window.dhndMaintenance.state || state)); },
+    onLogin: () => mostrarLoginInicial(),
+    onLogout: () => window.fazerLogout()
+});
 // CONTROLE DE PRAZOS DO EVENTO / INSCRIÇÕES
 // ==========================================================
 
@@ -710,6 +748,7 @@ function awaitWithTimeout(promise, milliseconds, code, message) {
     });
 }
 async function persistScoringModule(moduleName, records) {
+    if (window.dhndMaintenance && !window.dhndMaintenance.guard()) throw Object.assign(new Error('APP EM MANUTENÇÃO'), {code:'maintenance/blocked'});
     if (DB_KEY.includes('archive')) throw Object.assign(new Error('Temporada histórica protegida'), {code:'save/archive'});
     if (!['events', 'tempos'].includes(moduleName)) throw new Error('Módulo de gravação inválido');
     if (!database || !auth || !auth.currentUser || !navigator.onLine) {
@@ -735,13 +774,20 @@ async function persistScoringModule(moduleName, records) {
             try { connected.on('value', onValue, error => finish(error)); }
             catch (error) { finish(error); }
         });
+        if (window.dhndMaintenance && !window.dhndMaintenance.guard()) throw Object.assign(new Error('APP EM MANUTENÇÃO'), {code:'maintenance/blocked'});
         if (!auth.currentUser || auth.currentUser.uid !== uid || DB_KEY !== season || !navigator.onLine) {
             throw Object.assign(new Error('A sessão ou a conexão mudou durante a gravação'), {code:'save/not-connected'});
         }
         pending = writes.get(target);
         if (!pending) {
             const payload = JSON.parse(signature);
-            pending = {signature, uid, timedOut:false, promise:Promise.resolve().then(() => database.ref(target).set(payload))};
+            pending = {signature, uid, timedOut:false, promise:Promise.resolve().then(() => {
+                if (window.dhndMaintenance && !window.dhndMaintenance.guard()) throw Object.assign(new Error('APP EM MANUTENÇÃO'), {code:'maintenance/blocked'});
+                if (!auth.currentUser || auth.currentUser.uid !== uid || DB_KEY !== season || !navigator.onLine) {
+                    throw Object.assign(new Error('A sessão ou a conexão mudou durante a gravação'), {code:'save/not-connected'});
+                }
+                return database.ref(target).set(payload);
+            })};
             writes.set(target, pending);
             const current = pending;
             const release = () => { if (writes.get(target) === current) writes.delete(target); };
@@ -767,6 +813,7 @@ async function persistScoringModule(moduleName, records) {
     }
 }
 window.saveDB = function(moduleName = null) {
+    if (window.dhndMaintenance && !window.dhndMaintenance.guard()) return;
     if(DB_KEY.includes('archive')) return console.warn('Bloqueado: Tentativa de edição em arquivo histórico.');
     try { localStorage.setItem(DB_KEY, JSON.stringify(db)); } catch (e) { console.warn('Aviso: Limite do LocalStorage atingido.'); }
     if(!database) return;
@@ -774,6 +821,7 @@ window.saveDB = function(moduleName = null) {
     modules.forEach(name => pendingSaves.add(name));
     if(saveTimeout) clearTimeout(saveTimeout);
     saveTimeout = setTimeout(() => {
+        if (window.dhndMaintenance && !window.dhndMaintenance.guard()) { pendingSaves.clear(); return; }
         const modulesToSave = [...pendingSaves];
         pendingSaves.clear();
         const otherUpdates = {};
@@ -797,10 +845,12 @@ window.saveDB = function(moduleName = null) {
 
 let activeDatabaseRef = null;
 function startDatabaseSync() {
+    if (window.dhndMaintenance && !window.dhndMaintenance.guard()) return;
     if (!database) return;
     if (activeDatabaseRef) activeDatabaseRef.off('value');
     activeDatabaseRef = database.ref(DB_KEY);
     activeDatabaseRef.on('value', (snapshot) => {
+        if (window.dhndMaintenance && !window.dhndMaintenance.guard()) return;
         const data = snapshot.val();
         if(data) {
             const writes = persistScoringModule.pendingWrites;
@@ -825,6 +875,7 @@ function updateSessionStorage() { if(localStorage.getItem(SESS_KEY)) localStorag
 else sessionStorage.setItem(SESS_KEY, JSON.stringify(loggedUser)); }
 
 function refreshCurrentView() {
+    if (!maintenanceAllowsApp()) return;
     let filter = 'ALL'; const filterEl = document.getElementById('filter-evt-ranking');
     if(filterEl) filter = filterEl.value; 
     
@@ -1220,6 +1271,7 @@ window.abrirNotificacoes = function() {
 // 6. EVENTOS DE INICIALIZAÇÃO DA PÁGINA (LOAD)
 // ==========================================================
 document.addEventListener("DOMContentLoaded", function() {
+    maintenanceDomReady = true;
     ensureAdminExists(); ensureAuditUI(); 
     if(document.getElementById('lbl-cad-season')) document.getElementById('lbl-cad-season').innerText = SYSTEM_YEAR;
     
@@ -1255,8 +1307,7 @@ document.addEventListener("DOMContentLoaded", function() {
             if(db.users && !Array.isArray(db.users)) db.users = Object.values(db.users);
             if(db.users) db.users = db.users.filter(x => x !== null && x !== undefined);
             const fresh = (db.users || []).find(x => x && x.cpf && cleanCPF(x.cpf) === cleanCPF(u.cpf)); 
-            loggedUser = fresh ? fresh : u; 
-            initApp(true); 
+            maintenanceSavedSession = {user:fresh || u, remember:!!localStorage.getItem(SESS_KEY)}; 
             
             if(localStorage.getItem('draft_evt_t')) document.getElementById('adm-evt-t').value = localStorage.getItem('draft_evt_t'); 
             if(localStorage.getItem('draft_evt_d')) document.getElementById('adm-evt-d').value = localStorage.getItem('draft_evt_d'); 
@@ -1270,6 +1321,7 @@ document.addEventListener("DOMContentLoaded", function() {
         mostrarLoginInicial();
     }
     
+    mainMaintenanceChanged(window.dhndMaintenance.state);
     const timeInput = document.getElementById('adm-res-val'); if(timeInput) timeInput.addEventListener('input', function() { window.mascaraTempo(this); });
     const qualifyCheck = document.getElementById('adm-evt-has-qualify'); if(qualifyCheck) qualifyCheck.addEventListener('change', toggleQualifyInputs);
     const inputEvtName = document.getElementById('adm-evt-t'); if(inputEvtName) inputEvtName.addEventListener('input', function() { localStorage.setItem('draft_evt_t', this.value); });
@@ -1397,7 +1449,9 @@ document.addEventListener("DOMContentLoaded", function() {
     configurarAutocompleteCidades('super-edit-city', 'super-edit-uf', 'lista-cidades-adm');
     // ==========================================================
 });
-function trocarTela(id) { document.querySelectorAll('.screen').forEach(e => e.classList.remove('active')); const tela = document.getElementById('screen-' + id); if(tela) tela.classList.add('active'); const nav = document.getElementById('main-nav-bar');
+function trocarTela(id) {
+if (!maintenanceAllowsApp() && !(window.dhndMaintenance.state.loginRequested && id === 'login')) return;
+document.querySelectorAll('.screen').forEach(e => e.classList.remove('active')); const tela = document.getElementById('screen-' + id); if(tela) tela.classList.add('active'); const nav = document.getElementById('main-nav-bar');
 const head = document.getElementById('main-app-header'); if(id === 'app') { if(nav) nav.style.display='flex'; if(head) head.style.display='flex'; } else { if(nav) nav.style.display='none'; if(head) head.style.display='none'; } }
 function mostrarLoginInicial() { document.getElementById('lbl-season-year').innerText = SYSTEM_YEAR; trocarTela('login'); }
 window.togglePass = function(id) { const input = document.getElementById(id); const icon = input.nextElementSibling;
@@ -1453,6 +1507,7 @@ window.fazerLogin = async function() {
     // ======================================================
 
     if (
+        maintenanceAllowsApp() && !window.dhndMaintenance?.state.enabled &&
         localUser &&
         localUser.tempPass &&
         localUser.tempPass === passRaw
@@ -1614,14 +1669,50 @@ window.fazerLogin = async function() {
     }
 };
 
-function finishLogin(cpfClean, remember) { if(cpfClean === "00000000000") ensureAdminExists();
-let user = db.users.find(x => cleanCPF(x.cpf) === cpfClean); if(user) { executeLogin(user, remember);
-} else { toast("DADOS NÃO ENCONTRADOS NO SISTEMA", "error"); if(auth) auth.signOut(); } }
+async function finishLogin(cpfClean, remember) {
+    const account = auth && auth.currentUser;
+    const email = cpfClean + '@dhpe.com.br';
+    const season = DB_KEY;
+    const sameSession = () => auth && auth.currentUser && auth.currentUser.uid === account.uid &&
+        String(auth.currentUser.email || '').toLowerCase() === email && DB_KEY === season;
+    if (!account || !account.uid || !sameSession()) {
+        toast('NÃO FOI POSSÍVEL VALIDAR SUA SESSÃO. ENTRE NOVAMENTE.', 'error');
+        return false;
+    }
+    try {
+        const state = window.dhndMaintenance.state;
+        let user = state.ready && !state.enabled && db.users.find(entry => entry && cleanCPF(entry.cpf) === cpfClean);
+        if (!user) {
+            // The normal listener pauses during maintenance. Validate the authenticated profile separately.
+            const token = await awaitWithTimeout(account.getIdToken(), 8000, 'profile/timeout', 'Tempo de autenticação esgotado');
+            if (!sameSession()) return false;
+            const url = firebaseConfig.databaseURL + '/' + encodeURIComponent(season) + '/users.json?auth=' + encodeURIComponent(token);
+            const users = await awaitWithTimeout(fetch(url, {cache:'no-store'}).then(response => {
+                if (!response.ok) throw new Error('Cadastro indisponível');
+                return response.json();
+            }), 12000, 'profile/timeout', 'Tempo de leitura esgotado');
+            if (!sameSession()) return false;
+            user = Object.values(users || {}).find(entry => entry && cleanCPF(entry.cpf) === cpfClean);
+        }
+        if (!user || (user.uid && user.uid !== account.uid)) {
+            toast('CADASTRO NÃO ENCONTRADO OU INCOMPATÍVEL COM A CONTA.', 'error');
+            return false;
+        }
+        if (!sameSession()) return false;
+        executeLogin(user, remember);
+        return true;
+    } catch (_) {
+        if (sameSession()) toast('NÃO FOI POSSÍVEL CARREGAR O CADASTRO. TENTE NOVAMENTE.', 'error');
+        return false;
+    }
+}
 function executeLogin(user, remember) { loggedUser = user;
+if (window.dhndMaintenance) window.dhndMaintenance.refreshIdentity();
 if(remember) { localStorage.setItem(SESS_KEY, JSON.stringify(user)); sessionStorage.removeItem(SESS_KEY); } else { sessionStorage.setItem(SESS_KEY, JSON.stringify(user)); localStorage.removeItem(SESS_KEY); } toast("BEM-VINDO DE VOLTA!"); initApp(false);
 }
 window.fazerLogout = function() { if(auth) auth.signOut(); localStorage.removeItem(SESS_KEY); sessionStorage.removeItem(SESS_KEY); localStorage.removeItem(LAST_TAB_KEY); localStorage.removeItem(LAST_ADM_KEY); loggedUser = null; window.location.reload(true); };
-window.cadastrar = function() { 
+window.cadastrar = function() {
+    if (!maintenanceAllowsApp()) return toast('CADASTROS PAUSADOS DURANTE A MANUTENÇÃO.', 'error'); 
     const nome = document.getElementById('cad-nome').value.toUpperCase(); const cpf = document.getElementById('cad-cpf').value; const tel = document.getElementById('cad-tel').value;
     const city = document.getElementById('cad-city').value.toUpperCase(); const uf = document.getElementById('cad-uf').value; const gender = document.getElementById('cad-gender').value; const pass = document.getElementById('cad-pass').value; const cat = document.getElementById('cad-cat-final').value;
     const nasc = document.getElementById('cad-nasc').value; const secA = document.getElementById('cad-sec-a').value.toUpperCase(); const cbc = document.getElementById('cad-cbc') ? document.getElementById('cad-cbc').value : "";
@@ -1655,7 +1746,9 @@ window.mudarSenhaRecuperacao = function() {
         }
     } else { toast("Nenhuma alteração feita. Você pode logar."); fecharModal('modal-recovery'); }
 };
-function initApp(isRestoring = false) { 
+function initApp(isRestoring = false) {
+    if (!maintenanceAllowsApp()) { window.dhndMaintenance.refreshIdentity(); return; }
+    maintenanceAppOpened = true; 
     trocarTela('app');
     const btnAdm = document.getElementById('btn-adm');
 
@@ -1788,7 +1881,7 @@ if (btnAdm) {
 }
 
 
-function nav(t) { currentTab = t; localStorage.setItem(LAST_TAB_KEY, t); document.querySelectorAll('.bar-item').forEach(b => b.classList.remove('active')); if(document.getElementById('btn-'+t)) document.getElementById('btn-'+t).classList.add('active');
+function nav(t) { if (!maintenanceAllowsApp()) return; currentTab = t; localStorage.setItem(LAST_TAB_KEY, t); document.querySelectorAll('.bar-item').forEach(b => b.classList.remove('active')); if(document.getElementById('btn-'+t)) document.getElementById('btn-'+t).classList.add('active');
 document.querySelectorAll('.c-sec').forEach(e => { e.style.display='none'; e.classList.remove('active'); }); const activeSec = document.getElementById('cont-'+t); if(activeSec) { activeSec.style.display='block'; activeSec.classList.add('active');
 } if(t === 'tempos' || t === 'ranking') populatePublicFilters(t); if(t === 'profile') { updateCardLive(); loadProfileData(); } if(t === 'adm') tryOpenAdmin(true);
 else renderContent(t); }
@@ -5091,7 +5184,8 @@ window.openAdmSection = function(sec) {
     }
     if(sec === 'organizer') { renderOrgList(); const evtsHtml = db.events.map(e => `<label style="display:block; text-align:left; font-size:12px; margin-bottom:5px;"><input type="checkbox" class="org-evt-cb" value="${e.id}"> ${e.t}</label>`).join('');
     document.getElementById('org-events-list').innerHTML = evtsHtml; }
-    if(sec === 'config-global') { 
+    if(sec === 'config-global') {
+        window.DHNDMaintenanceAdmin.mount({controller:window.dhndMaintenance, container:'adm-maintenance-panel', users:()=>db.users || []}); 
         document.getElementById('adm-cfg-phone').value = db.config.phone || ''; 
         document.getElementById('adm-cfg-rerun-pass').value = db.config.rerunPass || 'admin123'; 
         document
@@ -7944,6 +8038,7 @@ window.forcePushData = function(win) { gatherAndPushData(win); };
 window.liveTimingWindow = null;
 
 function launchUnifiedLiveTiming() {
+    if (!maintenanceAllowsApp()) return;
     const btn = document.querySelector('.btn-live-launch');
     const evtId = document.getElementById('adm-res-evt').value; if(!evtId) return toast("SELECIONE UM EVENTO PRIMEIRO", "error");
     const origHtml = btn.innerHTML;

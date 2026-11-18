@@ -114,7 +114,7 @@ self.addEventListener("notificationclick", (event) => {
 // ==========================================================
 // PARTE 2: PWA E CACHE
 // ==========================================================
-const CACHE_NAME = 'dhnd-v15-largada-pronta-20261117';
+const CACHE_NAME = 'dhnd-v16-maintenance-20261117';
 
 self.addEventListener('install', (event) => {
     self.skipWaiting(); 

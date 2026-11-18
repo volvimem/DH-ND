@@ -43,6 +43,40 @@ const performDhClubDrawCallable =
   );
 
 let loggedUser = null;
+let clubMaintenanceEpoch = 0;
+let clubMaintenancePaused = true;
+let clubMaintenanceInitPromise = null;
+let clubEventsBound = false;
+let clubMaintenanceRunning = false;
+
+function clubMaintenanceAllowed() {
+  return !!(window.dhndMaintenance && window.dhndMaintenance.guard());
+}
+
+function pauseClubForMaintenance() {
+  if (!clubMaintenancePaused) clubMaintenanceEpoch++;
+  clubMaintenancePaused = true;
+  clubMaintenanceRunning = false;
+  database.ref(DB_KEY).off('value');
+  database.ref(CLUB_ROOT).off('value');
+  const app = document.getElementById('club-app');
+  if (app) app.classList.add('hidden');
+  closeModal();
+}
+
+function resumeClubAfterMaintenance() {
+  if (!clubMaintenanceAllowed() || clubMaintenanceInitPromise || clubMaintenanceRunning) return;
+  clubMaintenancePaused = false;
+  const epoch = clubMaintenanceEpoch;
+  clubMaintenanceInitPromise = Promise.resolve().then(() => init()).catch(error => {
+    console.error('[DH-CLUB] Falha ao abrir:', error && error.code || 'erro');
+    if (clubMaintenanceAllowed()) showClubGate('Não foi possível abrir o DH-Club', 'Volte ao DH-ND e tente novamente.');
+  }).finally(() => {
+    clubMaintenanceInitPromise = null;
+    if (clubMaintenanceAllowed() && epoch !== clubMaintenanceEpoch) resumeClubAfterMaintenance();
+  });
+}
+
 
 let core = {
   users: [],
@@ -18857,6 +18891,7 @@ function renderAdmin() {
 function render(
   view = currentView
 ) {
+  if (!clubMaintenanceAllowed()) return;
 
   currentView = view;
 
@@ -18910,6 +18945,7 @@ if (view === 'admin') {
 
 
 function go(view) {
+  if (!clubMaintenanceAllowed()) return;
 
   // ========================================================
   // FECHA TODAS AS TELAS
@@ -25643,6 +25679,8 @@ function withTimeout(
 // ==========================================================
 
 async function init() {
+  if (!clubMaintenanceAllowed()) return;
+  const maintenanceEpoch = clubMaintenanceEpoch;
 
   setClubLoading(
     'VERIFICANDO SESSÃO…'
@@ -25886,6 +25924,7 @@ async function init() {
   );
 
 
+  if (!clubMaintenanceAllowed() || maintenanceEpoch !== clubMaintenanceEpoch) return;
   const [
     coreSnap,
     clubSnap
@@ -25919,6 +25958,7 @@ async function init() {
     );
 
 
+  if (!clubMaintenanceAllowed() || maintenanceEpoch !== clubMaintenanceEpoch) return;
   const c =
     coreSnap.val() ||
     {};
@@ -25997,6 +26037,7 @@ async function init() {
   // 7. ABRE O DH-CLUB
   // ========================================================
 
+  if (!clubMaintenanceAllowed() || maintenanceEpoch !== clubMaintenanceEpoch) return;
   setClubLoading(
     'ABRINDO DH-CLUB…'
   );
@@ -26030,9 +26071,12 @@ async function init() {
   }
 
 
-  bind();
-
-
+  if (!clubEventsBound) {
+    bind();
+    clubEventsBound = true;
+  }
+  const previousGate = document.getElementById('club-gate');
+  if (previousGate) previousGate.classList.add('hidden');
   renderHome();
 
 
@@ -26048,6 +26092,7 @@ async function init() {
       'value',
 
       snap => {
+        if (!clubMaintenanceAllowed() || maintenanceEpoch !== clubMaintenanceEpoch) return;
 
         const c =
           snap.val() ||
@@ -26124,6 +26169,7 @@ async function init() {
       'value',
 
       snap => {
+        if (!clubMaintenanceAllowed() || maintenanceEpoch !== clubMaintenanceEpoch) return;
 
         club =
           normalizeClub(
@@ -26145,6 +26191,7 @@ async function init() {
         );
       }
     );
+  clubMaintenanceRunning = true;
 }
 
 
@@ -26237,68 +26284,23 @@ shareWrapped
 // INICIA O DH-CLUB
 // ==========================================================
 
-init().catch(err => {
-
-    console.error("ERRO DH-CLUB:", err);
-
-    const splash =
-        document.getElementById('club-splash');
-
-    const gate =
-        document.getElementById('club-gate');
-
-    const title =
-        document.getElementById('gate-title');
-
-    const message =
-        document.getElementById('gate-message');
-
-
-    if (splash) {
-        splash.classList.add('hidden');
-    }
-
-
-    if (gate) {
-        gate.classList.remove('hidden');
-    }
-
-
-    if (title) {
-        title.textContent =
-            'Erro ao abrir DH-Club';
-    }
-
-
-    if (message) {
-
-        const codigo =
-            err && err.code
-                ? err.code
-                : 'SEM_CODIGO';
-
-        const detalhe =
-            err && err.message
-                ? err.message
-                : String(err);
-
-
-        message.innerHTML = `
-            <b style="color:#ffcc4d;">
-                ${codigo}
-            </b>
-
-            <br><br>
-
-            <span style="
-                font-size:12px;
-                word-break:break-word;
-            ">
-                ${detalhe}
-            </span>
-        `;
-    }
-
+loggedUser = sessionUser();
+window.dhndMaintenance = window.DHNDMaintenance.create({
+  database,
+  auth,
+  databaseURL: firebaseConfig.databaseURL,
+  identity: () => loggedUser,
+  onChange: state => {
+    if (state.allowed) resumeClubAfterMaintenance();
+    else pauseClubForMaintenance();
+  },
+  onLogin: () => { window.location.href = 'index.html'; },
+  onLogout: () => {
+    localStorage.removeItem(SESS_KEY);
+    sessionStorage.removeItem(SESS_KEY);
+    Promise.resolve(auth.signOut()).finally(() => { window.location.href = 'index.html'; });
+  }
 });
+if (clubMaintenanceAllowed()) resumeClubAfterMaintenance();
 
 })();

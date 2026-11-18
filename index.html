@@ -1,6 +1,7 @@
 <!DOCTYPE html>
-<html lang="pt-br">
+<html lang="pt-br" data-dhnd-maintenance="pending">
 <head>
+    <style>html[data-dhnd-maintenance="pending"] body > *:not(#dhnd-maintenance-gate),html[data-dhnd-maintenance="blocked"] body > *:not(#dhnd-maintenance-gate){visibility:hidden}html[data-dhnd-maintenance="login"] #screen-app,html[data-dhnd-maintenance="login"] #main-nav-bar,html[data-dhnd-maintenance="login"] #main-app-header{display:none!important}</style>
     <meta charset="UTF-8">
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
@@ -694,6 +695,7 @@
                 <div id="adm-sec-config-global" class="adm-section" style="display:none">
                     <div style="background:white; border:1px solid #ddd; padding:10px; border-radius:8px;">
                         <b>CONFIGURAÇÕES GERAIS</b>
+                        <div id="adm-maintenance-panel" style="margin-top:14px;"></div>
                         <div class="input-group" style="margin-top:10px"><label>ZAP SUPORTE</label><input id="adm-cfg-phone" class="input-field" placeholder="Ex: 81900000000"></div>
                         <div class="input-group" style="margin-top:10px"><label>SENHA MASTER (Usada para alertas, exclusões e Live)</label><input id="adm-cfg-rerun-pass" class="input-field" placeholder="Senha padrão: admin123"></div>
 
@@ -994,6 +996,10 @@
     </style>
 </head>
 <body>
+<script>
+(function(){function admitted(){try{return !!(window.opener && !window.opener.closed && window.opener.dhndMaintenance && window.opener.dhndMaintenance.guard());}catch(_){return false;}}function stop(){if(admitted())return;try{if(window.firebase && firebase.apps.length)firebase.database().goOffline();}catch(_){}window.close();document.body.textContent='APP EM MANUTENÇÃO. VOLTE AO DH-ND.';}setInterval(stop,1000);document.addEventListener('click',function(e){if(!admitted()){e.preventDefault();e.stopImmediatePropagation();stop();}},true);stop();})();
+</script>
+
 <div class="app-container">
   <aside class="sidebar-left custom-scroll">
     <div class="logo"><i class="fas fa-mountain"></i> DH-ND Downhill</div>
@@ -1630,7 +1636,9 @@ refreshListsOnly();
 
 <script src="season-policy.js?v=1"></script>
 <script src="ranking-policy.js?v=1"></script>
-<script src="script.js?v=168"></script>
+<script src="maintenance.js?v=1"></script>
+<script src="maintenance-admin.js?v=1"></script>
+<script src="script.js?v=169"></script>
 
 </body>
 </html>
