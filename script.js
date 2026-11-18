@@ -75,6 +75,7 @@ function mainMaintenanceChanged(state) {
     if (!state.allowed) {
         maintenanceAppOpened = false;
         if (activeDatabaseRef) { activeDatabaseRef.off('value'); activeDatabaseRef = null; }
+        stopRosterSync();
         if (saveTimeout) clearTimeout(saveTimeout);
         pendingSaves.clear();
         document.querySelectorAll('.modal-overlay').forEach(el => { el.style.display = 'none'; });
@@ -430,7 +431,7 @@ function validarPlacaParaEvento(cpf, evtId, placa) {
     return true;
 }
 
-function registrarPlacaAtletaEvento(cpf, evtId, placa, auditar = true) {
+function registrarPlacaAtletaEvento(cpf, evtId, placa, auditar = true, shouldSave = true) {
     const atleta = db.users.find(u => cleanCPF(u.cpf) === cleanCPF(cpf));
     if (!atleta || !(atleta.inscricoes || []).some(i => String(i.id) === String(evtId))) {
         toast('INSCRIÇÃO NÃO ENCONTRADA', 'error'); return false;
@@ -439,26 +440,28 @@ function registrarPlacaAtletaEvento(cpf, evtId, placa, auditar = true) {
     const inscricoesEvento = atleta.inscricoes.filter(i => String(i.id) === String(evtId));
     if (inscricoesEvento.every(i => Object.prototype.hasOwnProperty.call(i, 'placa') && String(i.placa) === placa)) return true;
     inscricoesEvento.forEach(i => { i.placa = placa; });
-    saveDB('users');
-    if (auditar) window.logAction(`Atualizou placa de ${atleta.nome} no evento ${evtId}: ${placa || 'SEM PLACA'}`);
-    return true;
+    if (!shouldSave) return true;
+    return saveDB('users').then(saved => {
+        if (saved && auditar) window.logAction(`Atualizou placa de ${atleta.nome} no evento ${evtId}: ${placa || 'SEM PLACA'}`);
+        return saved;
+    });
 }
 
-window.salvarPlacaInscricao = function(cpf, evtId, botao) {
+window.salvarPlacaInscricao = async function(cpf, evtId, botao) {
     const input = botao && botao.closest('.adm-placa-row')?.querySelector('.adm-placa-input');
     if (!input) return toast('CAMPO DE PLACA NÃO ENCONTRADO', 'error');
     const placa = input.value.trim();
-    if (registrarPlacaAtletaEvento(cpf, evtId, placa)) {
+    if (await registrarPlacaAtletaEvento(cpf, evtId, placa)) {
         toast(placa ? `PLACA ${placa} SALVA NA INSCRIÇÃO!` : 'PLACA REMOVIDA DESTA ETAPA!', 'success');
         renderInscriptions();
     }
 };
 
 // Ao aprovar ou isentar, aproveita também a placa digitada no próprio cartão.
-function salvarPlacaNoAtoDaAprovacao(cpf, evtId, botao) {
+function salvarPlacaNoAtoDaAprovacao(cpf, evtId, botao, shouldSave = true) {
     const input = botao && botao.closest('.adm-card')?.querySelector('.adm-placa-input');
     if (!input || !input.value.trim()) return true;
-    return registrarPlacaAtletaEvento(cpf, evtId, input.value.trim());
+    return registrarPlacaAtletaEvento(cpf, evtId, input.value.trim(), shouldSave, shouldSave);
 }
 
 function applyAdminPermissions() {
@@ -823,12 +826,18 @@ async function persistScoringModule(moduleName, records) {
         throw error;
     }
 }
-window.saveDB = function(moduleName = null) {
-    if (window.dhndMaintenance && !window.dhndMaintenance.guard()) return;
-    if(DB_KEY.includes('archive')) return console.warn('Bloqueado: Tentativa de edição em arquivo histórico.');
-    try { localStorage.setItem(DB_KEY, JSON.stringify(db)); } catch (e) { console.warn('Aviso: Limite do LocalStorage atingido.'); }
-    if(!database) return;
-    const modules = moduleName ? (Array.isArray(moduleName) ? moduleName : [moduleName]) : ['users', 'events', 'tempos', 'config', 'notifications', 'auditLog', 'x1_duels'];
+window.saveDB = function(moduleName = null, rosterOptions) {
+    const modules = moduleName ? (Array.isArray(moduleName) ? moduleName : [moduleName]) : ['events', 'tempos', 'config', 'notifications', 'auditLog', 'x1_duels'];
+    if (modules.includes('users')) {
+        return saveRosterChanges(rosterOptions || {}).then(saved => {
+            const others = modules.filter(name => name !== 'users');
+            if (saved && others.length) window.saveDB(others);
+            return saved;
+        });
+    }
+    if (!maintenanceAllowsApp() || DB_KEY.includes('archive')) return;
+    cacheDatabase();
+    if (!database) return;
     modules.forEach(name => pendingSaves.add(name));
     if(saveTimeout) clearTimeout(saveTimeout);
     saveTimeout = setTimeout(() => {
@@ -855,39 +864,203 @@ window.saveDB = function(moduleName = null) {
 };
 
 let activeDatabaseRef = null;
-function startDatabaseSync() {
-    if (window.dhndMaintenance && !window.dhndMaintenance.guard()) return;
-    if (!database) return;
-    if (activeDatabaseRef) activeDatabaseRef.off('value');
-    activeDatabaseRef = database.ref(DB_KEY);
-    activeDatabaseRef.on('value', (snapshot) => {
-        if (window.dhndMaintenance && !window.dhndMaintenance.guard()) return;
-        const data = snapshot.val();
-        if(data) {
-            const writes = persistScoringModule.pendingWrites;
-            for (const moduleName of ['events', 'tempos']) {
-                if (writes && writes.has(DB_KEY + '/' + moduleName)) data[moduleName] = db[moduleName];
-            }
-            if(data.tempos && !Array.isArray(data.tempos)) data.tempos = Object.values(data.tempos);
-            if(data.users && !Array.isArray(data.users)) data.users = Object.values(data.users);
-            if(data.events && !Array.isArray(data.events)) data.events = Object.values(data.events);
-            if(data.notifications && !Array.isArray(data.notifications)) data.notifications = Object.values(data.notifications);
-            if(data.auditLog && !Array.isArray(data.auditLog)) data.auditLog = Object.values(data.auditLog);
-            db = data; checkDbIntegrity();
-            try { localStorage.setItem(DB_KEY, JSON.stringify(db)); } catch (_) {}
-            if (loggedUser) {
-                const uid = auth?.currentUser?.uid || loggedUser.uid;
-                const fresh = uid && typeof selectAuthenticatedProfile === 'function'
-                    ? selectAuthenticatedProfile(db.users, cleanCPF(loggedUser.cpf), uid).user
-                    : db.users.find(u => cleanCPF(u.cpf) === cleanCPF(loggedUser.cpf));
-                if (fresh) { loggedUser = fresh; updateSessionStorage(); }
-            }
-            refreshCurrentView(); atualizarBadgeNotificacoes();
-            if (window.liveTimingWindow && !window.liveTimingWindow.closed) { if (typeof gatherAndPushData === 'function') gatherAndPushData(window.liveTimingWindow); }
-        }
-    }, error => console.warn('[DB] Sincronização indisponível:', error.code || 'erro de leitura'));
+let rosterConnectionRef = null;
+let rosterConnected = false;
+let rosterStatus = 'loading';
+let rosterReadNumber = 0;
+let rosterState = window.DHNDRoster.capture(db.users);
+db.users = rosterState.users;
+
+function rosterReady() {
+    return rosterConnected && navigator.onLine !== false && rosterStatus === 'current';
 }
+
+function refreshRosterPanel() {
+    if (currentTab === 'adm' && currentAdmSection === 'users-edit' &&
+        document.getElementById('adm-panel-real')?.style.display === 'block') {
+        filterPilots('edit-user', true);
+    }
+}
+
+function cacheDatabase() {
+    // Rascunhos locais de cadastros não entram no cache antes de o Firebase confirmar.
+    try { localStorage.setItem(DB_KEY, JSON.stringify({...db, users:Object.values(rosterState.raw || {}).filter(Boolean)})); }
+    catch (_) {}
+}
+
+function replaceRoster(rawUsers) {
+    rosterState = window.DHNDRoster.capture(rawUsers);
+    db.users = rosterState.users;
+    if (!loggedUser || DB_KEY.includes('archive')) return;
+    const uid = auth?.currentUser?.uid || loggedUser.uid;
+    const cpf = cleanCPF(loggedUser.cpf);
+    const current = uid
+        ? selectAuthenticatedProfile(db.users, cpf, uid).user
+        : db.users.find(user => cleanCPF(user.cpf) === cpf);
+    if (current) {
+        loggedUser = current;
+        updateSessionStorage();
+    }
+}
+
+function stopRosterSync() {
+    ++rosterReadNumber;
+    if (rosterConnectionRef) rosterConnectionRef.off('value');
+    rosterConnectionRef = null;
+    rosterConnected = false;
+    rosterStatus = 'loading';
+}
+
+async function confirmRosterFromFirebase() {
+    if (!activeDatabaseRef || !rosterConnected || !maintenanceAllowsApp()) return false;
+    const root = DB_KEY;
+    const readNumber = ++rosterReadNumber;
+    const stillCurrent = () => rosterReadNumber === readNumber && rosterConnected && navigator.onLine !== false &&
+        DB_KEY === root && maintenanceAllowsApp();
+    rosterStatus = 'loading';
+    refreshRosterPanel();
+    const controller = new AbortController();
+    try {
+        const account = auth?.currentUser;
+        const token = account
+            ? await awaitWithTimeout(account.getIdToken(), 8000, 'roster/auth-timeout', 'Sessão ainda não confirmada')
+            : '';
+        if (!stillCurrent()) return false;
+        const endpoint = firebaseConfig.databaseURL + '/' + root + '/users.json' + (token ? '?auth=' + encodeURIComponent(token) : '');
+        const rawUsers = await awaitWithTimeout(fetch(endpoint, {
+            cache:'no-store', referrerPolicy:'no-referrer', signal:controller.signal
+        }).then(response => {
+            if (!response.ok) throw new Error('Cadastro indisponível');
+            return response.json();
+        }), 12000, 'roster/read-timeout', 'Cadastro ainda não sincronizado');
+        if (!stillCurrent()) return false;
+        replaceRoster(rawUsers);
+        rosterStatus = 'current';
+        cacheDatabase();
+    } catch (_) {
+        if (!stillCurrent()) return false;
+        rosterStatus = 'unavailable';
+    } finally {
+        controller.abort();
+    }
+    refreshCurrentView();
+    return rosterStatus === 'current';
+}
+
+async function saveRosterChanges(options) {
+    const fail = message => {
+        if (!options.quiet) toast(message, 'error');
+        return false;
+    };
+    const rejectLocalEdits = () => {
+        replaceRoster(rosterState.raw);
+        refreshCurrentView();
+    };
+    const uid = auth?.currentUser?.uid || '';
+    const cpf = loggedUser ? cleanCPF(loggedUser.cpf) : '';
+    if (!database || !maintenanceAllowsApp() || DB_KEY.includes('archive') || !rosterReady() || (!uid && !cpf)) {
+        rejectLocalEdits();
+        return fail('AGUARDE O FIREBASE ATUALIZAR OS CADASTROS ANTES DE SALVAR.');
+    }
+    const root = DB_KEY;
+    const ref = database.ref(root + '/users');
+    const plan = window.DHNDRoster.plan(rosterState, db.users, {...options, createKey:options.create ? ref.push().key : null});
+    if (plan.invalid) {
+        rejectLocalEdits();
+        return fail('O CADASTRO MUDOU OU NÃO ESTÁ DISPONÍVEL. ATUALIZE A TELA E TENTE NOVAMENTE.');
+    }
+    if (!plan.changes.length && !plan.create && !plan.remove && !plan.restore) return true;
+    const sameSession = () => DB_KEY === root && maintenanceAllowsApp() && rosterConnected && navigator.onLine !== false &&
+        (uid ? auth?.currentUser?.uid === uid : !auth?.currentUser && loggedUser && cleanCPF(loggedUser.cpf) === cpf);
+    try {
+        // Carrega o nó no SDK antes da transação, que pode começar sem dados locais.
+        await awaitWithTimeout(ref.get(), 12000, 'roster/read-timeout', 'Cadastro ainda não sincronizado');
+        if (!sameSession()) throw new Error('Sessão ou conexão mudou');
+        const transaction = ref.transaction(current => sameSession() ? window.DHNDRoster.apply(current, plan) : undefined, undefined, false);
+        const result = await awaitWithTimeout(transaction, 20000, 'roster/write-timeout', 'Gravação ainda sem confirmação');
+        if (!result.committed) {
+            if (DB_KEY === root) {
+                rejectLocalEdits();
+                void confirmRosterFromFirebase();
+            }
+            return fail('O CADASTRO MUDOU EM OUTRO DISPOSITIVO. CONFIRA A LISTA ATUALIZADA ANTES DE TENTAR NOVAMENTE.');
+        }
+        return sameSession();
+    } catch (error) {
+        if (DB_KEY === root) {
+            rejectLocalEdits();
+            void confirmRosterFromFirebase();
+        }
+        return fail(error?.code === 'roster/write-timeout'
+            ? 'A GRAVAÇÃO AINDA NÃO FOI CONFIRMADA. CONFIRA O CADASTRO ANTES DE TENTAR NOVAMENTE.'
+            : 'NÃO FOI POSSÍVEL CONFIRMAR A GRAVAÇÃO DO CADASTRO. TENTE NOVAMENTE COM A CONEXÃO ATIVA.');
+    }
+}
+
+function startDatabaseSync() {
+    if (!database || !maintenanceAllowsApp()) return;
+    if (activeDatabaseRef) activeDatabaseRef.off('value');
+    stopRosterSync();
+    const root = DB_KEY;
+    const rootRef = database.ref(root);
+    const connection = database.ref('.info/connected');
+    activeDatabaseRef = rootRef;
+    rosterConnectionRef = connection;
+    rootRef.on('value', snapshot => {
+        if (activeDatabaseRef !== rootRef || DB_KEY !== root || !maintenanceAllowsApp()) return;
+        const data = snapshot.val() || {};
+        const writes = persistScoringModule.pendingWrites;
+        for (const moduleName of ['events', 'tempos']) {
+            if (writes && writes.has(root + '/' + moduleName)) data[moduleName] = db[moduleName];
+        }
+        const rawUsers = data.users;
+        data.users = db.users;
+        db = data;
+        if (rosterReady()) replaceRoster(rawUsers);
+        checkDbIntegrity();
+        cacheDatabase();
+        refreshCurrentView();
+        atualizarBadgeNotificacoes();
+        if (window.liveTimingWindow && !window.liveTimingWindow.closed && typeof gatherAndPushData === 'function') {
+            gatherAndPushData(window.liveTimingWindow);
+        }
+    }, error => {
+        if (activeDatabaseRef !== rootRef) return;
+        activeDatabaseRef = null;
+        stopRosterSync();
+        rosterStatus = 'unavailable';
+        refreshRosterPanel();
+        console.warn('[DB] Sincronização indisponível:', error.code || 'erro de leitura');
+    });
+    connection.on('value', snapshot => {
+        if (rosterConnectionRef !== connection || DB_KEY !== root) return;
+        const connected = snapshot.val() === true;
+        if (connected === rosterConnected) return;
+        rosterConnected = connected;
+        if (connected) void confirmRosterFromFirebase();
+        else {
+            ++rosterReadNumber;
+            rosterStatus = 'offline';
+            refreshRosterPanel();
+        }
+    });
+}
+
+window.addEventListener('offline', () => {
+    ++rosterReadNumber;
+    rosterStatus = 'offline';
+    refreshRosterPanel();
+});
+window.addEventListener('online', () => { if (rosterConnected) void confirmRosterFromFirebase(); });
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && rosterConnected) void confirmRosterFromFirebase();
+});
 if (database) startDatabaseSync();
+if (auth) auth.onAuthStateChanged(() => {
+    if (!maintenanceAllowsApp()) return;
+    if (!activeDatabaseRef) startDatabaseSync();
+    else if (rosterConnected) void confirmRosterFromFirebase();
+});
 
 function updateSessionStorage() {
     try {
@@ -1671,7 +1844,9 @@ window.fazerLogout = async function() {
     loggedUser = null;
     window.location.reload();
 };
-window.cadastrar = function() {
+let registrationAccountSaving = false;
+window.cadastrar = async function() {
+    if (registrationAccountSaving) return;
     if (!maintenanceAllowsApp()) return toast('CADASTROS PAUSADOS DURANTE A MANUTENÇÃO.', 'error'); 
     const nome = document.getElementById('cad-nome').value.toUpperCase(); const cpf = document.getElementById('cad-cpf').value; const tel = document.getElementById('cad-tel').value;
     const city = document.getElementById('cad-city').value.toUpperCase(); const uf = document.getElementById('cad-uf').value; const gender = document.getElementById('cad-gender').value; const pass = document.getElementById('cad-pass').value; const cat = document.getElementById('cad-cat-final').value;
@@ -1679,9 +1854,28 @@ window.cadastrar = function() {
     if(!nome || !cpf || !tel || !city || !gender || !pass || !secA || !cat || !nasc) return toast("PREENCHA TUDO", "error");
     if(!validarCPF(cleanCPF(cpf))) return toast("CPF INVÁLIDO! VERIFIQUE.", "error"); if(db.users.find(u => cleanCPF(u.cpf) === cleanCPF(cpf))) return toast("CPF JÁ CADASTRADO NO BANCO", "error");
     if(pass.length < 6) return toast("A SENHA DEVE TER NO MÍNIMO 6 CARACTERES", "error");
-    const emailFake = cleanCPF(cpf) + "@dhpe.com.br";
-    toast("CRIANDO CONTA...", "info");
-    if(auth) { auth.createUserWithEmailAndPassword(emailFake, pass).then((userCredential) => { const newUser = { nome, cpf, tel, city, uf, gender, cat, nasc, secA, team: '', cbc: cbc, role: 'USER', inscricoes: [], selfie: null, allowedEvts: [], idReleased: false, filiadoPE: false }; db.users.push(newUser); saveDB('users'); window.enviarNotificacao(`Novo atleta cadastrado no sistema: ${nome} (${city}-${uf}).`, 'ADMIN', null, null); loggedUser = newUser; updateSessionStorage(); toast("CADASTRO REALIZADO COM SUCESSO!"); initApp(false); }).catch((error) => { if(error.code === 'auth/email-already-in-use') toast("ESTE CPF JÁ ESTÁ REGISTRADO NO FIREBASE", "error"); else toast("ERRO AO CADASTRAR: " + error.message, "error"); });
+    if (!auth || DB_KEY.includes('archive') || !rosterReady()) {
+        return toast('AGUARDE A ATUALIZAÇÃO DOS CADASTROS ANTES DE CRIAR A CONTA.', 'error');
+    }
+    const email = cleanCPF(cpf) + '@dhpe.com.br';
+    registrationAccountSaving = true;
+    toast('CRIANDO CONTA...', 'info');
+    try {
+        const credential = await auth.createUserWithEmailAndPassword(email, pass);
+        const user = {
+            uid:credential.user.uid, nome, cpf, tel, city, uf, gender, cat, nasc, secA, team:'', cbc,
+            role:'USER', inscricoes:[], selfie:null, allowedEvts:[], idReleased:false, filiadoPE:false
+        };
+        if (!await saveDB('users', {create:user})) return;
+        window.enviarNotificacao('Novo atleta cadastrado no sistema: ' + nome + ' (' + city + '-' + uf + ').', 'ADMIN', null, null);
+        loggedUser = db.users.find(profile => profile.uid === user.uid) || user;
+        updateSessionStorage();
+        toast('CADASTRO REALIZADO COM SUCESSO!');
+        initApp(false);
+    } catch (error) {
+        toast(error.code === 'auth/email-already-in-use' ? 'ESTE CPF JÁ ESTÁ REGISTRADO NO FIREBASE' : 'NÃO FOI POSSÍVEL CRIAR A CONTA. TENTE NOVAMENTE.', 'error');
+    } finally {
+        registrationAccountSaving = false;
     }
 };
 
@@ -1692,16 +1886,23 @@ if(user) { document.getElementById('rec-security-area').style.display='block'; d
 window.revelarSenha = function() { const cpfRaw = document.getElementById('rec-cpf').value; const ans = document.getElementById('rec-answer').value.toUpperCase(); const user = db.users.find(u => cleanCPF(u.cpf) === cleanCPF(cpfRaw));
 if(user && user.secA === ans) { document.getElementById('rec-security-area').style.display = 'none'; document.getElementById('rec-change-pass-area').style.display = 'block'; toast("RESPOSTA CORRETA!", "success");
 } else { showConfirm("ERRO DE SEGURANÇA", "Resposta Incorreta. Tente novamente.", '<i class="fas fa-times-circle" style="color:#d50000"></i>', null); } };
-window.mudarSenhaRecuperacao = function() {
+window.mudarSenhaRecuperacao = async function() {
     const cpfRaw = document.getElementById('rec-cpf').value; const clean = cleanCPF(cpfRaw);
     const user = db.users.find(u => cleanCPF(u.cpf) === clean); const newPass = document.getElementById('rec-new-pass').value;
     if(newPass.length > 0 && newPass.length < 6) return toast("A nova senha deve ter no mínimo 6 dígitos", "error");
+    if (newPass.length >= 6 && (!auth?.currentUser || String(auth.currentUser.email || "").toLowerCase() !== clean + "@dhpe.com.br")) {
+        return toast("PARA RECUPERAR O ACESSO, FALE COM O SUPORTE DA TELA DE LOGIN.", "error");
+    }
     if(newPass.length >= 6) {
         const emailFake = clean + "@dhpe.com.br"; toast("ATUALIZANDO SENHA...", "info");
-        const salvarLocal = () => { const idx = db.users.findIndex(u => cleanCPF(u.cpf) === clean);
-        if(idx > -1) { db.users[idx].pass = newPass; db.users[idx].tempPass = null; db.users[idx].adminNewPass = null; saveDB('users'); } toast("SENHA ALTERADA COM SUCESSO!"); fecharModal('modal-recovery');
+        const salvarLocal = async () => { const idx = db.users.findIndex(u => cleanCPF(u.cpf) === clean);
+        if(idx === -1) return false;
+        db.users[idx].pass = newPass; db.users[idx].tempPass = null; db.users[idx].adminNewPass = null;
+        if (!await saveDB('users')) return false;
+        toast("SENHA ALTERADA COM SUCESSO!"); fecharModal('modal-recovery');
+        return true;
         };
-        salvarLocal();
+        if (!await salvarLocal()) return;
         if(auth) { const authPass = newPass.padEnd(6, '0'); auth.signInWithEmailAndPassword(emailFake, user.pass || 'default123').then(() => { auth.currentUser.updatePassword(authPass).catch(()=>{}); }).catch((e) => { if (e.code === 'auth/user-not-found') { auth.createUserWithEmailAndPassword(emailFake, authPass).catch(()=>{}); } });
         }
     } else { toast("Nenhuma alteração feita. Você pode logar."); fecharModal('modal-recovery'); }
@@ -1859,21 +2060,59 @@ function loadProfileData() { if(!loggedUser) return; document.getElementById('pr
 document.getElementById('prof-edit-city').value = loggedUser.city; document.getElementById('prof-edit-cat').value = loggedUser.cat; document.getElementById('prof-edit-team').value = loggedUser.team || ""; document.getElementById('prof-edit-tel').value = loggedUser.tel || ""; document.getElementById('prof-edit-uf').value = loggedUser.uf ||
 "PE"; if(document.getElementById('prof-edit-cbc')) document.getElementById('prof-edit-cbc').value = loggedUser.cbc || ""; }
 
-window.salvarFullProfile = function() { if(!loggedUser) return; const team = document.getElementById('prof-edit-team').value.toUpperCase();
-const tel = document.getElementById('prof-edit-tel').value; const uf = document.getElementById('prof-edit-uf').value; const cbc = document.getElementById('prof-edit-cbc') ? document.getElementById('prof-edit-cbc').value : "";
-const idx = db.users.findIndex(u => u.cpf === loggedUser.cpf); if(idx > -1) { db.users[idx].team = team; db.users[idx].tel = tel;
-db.users[idx].uf = uf; db.users[idx].cbc = cbc; loggedUser.team = team; loggedUser.tel = tel; loggedUser.uf = uf; loggedUser.cbc = cbc; saveDB('users'); updateSessionStorage();
-toast("DADOS SALVOS!"); updateCardLive(); } };
+window.salvarFullProfile = async function() {
+    if (!loggedUser) return;
+    const cpf = loggedUser.cpf;
+    const profile = db.users.find(user => user.cpf === cpf);
+    if (!profile) return toast('ATLETA NÃO ENCONTRADO.', 'error');
+    const fields = {
+        team:document.getElementById('prof-edit-team').value.toUpperCase(),
+        tel:document.getElementById('prof-edit-tel').value,
+        uf:document.getElementById('prof-edit-uf').value,
+        cbc:document.getElementById('prof-edit-cbc')?.value || ''
+    };
+    Object.assign(profile, fields);
+    if (!await saveDB('users')) return;
+    if (loggedUser?.cpf === cpf) {
+        loggedUser = db.users.find(user => user.cpf === cpf) || loggedUser;
+        updateSessionStorage();
+        updateCardLive();
+    }
+    toast('DADOS SALVOS!');
+};
 
-window.mudarSenhaPerfil = function() { const novaSenha = document.getElementById('prof-new-pass').value;
+window.mudarSenhaPerfil = async function() { const novaSenha = document.getElementById('prof-new-pass').value;
 if(novaSenha.length < 6) return toast("A SENHA DEVE TER NO MÍNIMO 6 DÍGITOS", "error");
 const idx = db.users.findIndex(u => cleanCPF(u.cpf) === cleanCPF(loggedUser.cpf)); if(idx > -1) { db.users[idx].adminNewPass = null; db.users[idx].tempPass = null;
-db.users[idx].tempPassExp = null; db.users[idx].pass = novaSenha; saveDB('users'); updateSessionStorage(); } toast("SENHA ATUALIZADA COM SUCESSO!"); document.getElementById('prof-new-pass').value = '';
+db.users[idx].tempPassExp = null; db.users[idx].pass = novaSenha; if (!await saveDB('users')) return; updateSessionStorage(); } toast("SENHA ATUALIZADA COM SUCESSO!"); document.getElementById('prof-new-pass').value = '';
 if(auth && auth.currentUser) { auth.currentUser.updatePassword(novaSenha.padEnd(6, '0')).catch(()=>{}); } };
 
-window.uploadSelfie = function(input) { if (input.files && input.files[0]) { toast("PROCESSANDO FOTO... AGUARDE");
-compressImage(input.files[0], 400, (base64) => { if(!base64) return toast("ERRO AO PROCESSAR FOTO", "error"); const img = document.getElementById('card-img-display'); if(img) img.src = base64; const fileName = `selfies/piloto_${cleanCPF(loggedUser.cpf)}_${Date.now()}.jpg`; uploadImageToStorage(base64, fileName).then(url => { if(url) { const idx = db.users.findIndex(u => u.cpf === loggedUser.cpf); if(idx > -1) { db.users[idx].selfie = url; loggedUser.selfie = url; saveDB('users'); updateSessionStorage(); } toast("FOTO ATUALIZADA COM SUCESSO!"); input.value = ''; } else toast("ERRO AO SALVAR FOTO NA NUVEM", "error"); }).catch(e => { toast("FALHA DE CONEXÃO AO ENVIAR FOTO", "error"); }); });
-} };
+window.uploadSelfie = function(input) {
+    if (!loggedUser || !input.files?.[0]) return;
+    const cpf = loggedUser.cpf;
+    toast('PROCESSANDO FOTO... AGUARDE');
+    compressImage(input.files[0], 400, async base64 => {
+        if (!base64) return toast('ERRO AO PROCESSAR FOTO', 'error');
+        try {
+            const url = await uploadImageToStorage(base64, 'selfies/piloto_' + cleanCPF(cpf) + '_' + Date.now() + '.jpg');
+            if (!url) return toast('ERRO AO SALVAR FOTO NA NUVEM', 'error');
+            if (loggedUser?.cpf !== cpf) return toast('SUA SESSÃO MUDOU. ENTRE NOVAMENTE.', 'error');
+            const profile = db.users.find(user => user.cpf === cpf);
+            if (!profile) return toast('ATLETA NÃO ENCONTRADO.', 'error');
+            profile.selfie = url;
+            if (!await saveDB('users')) return;
+            if (loggedUser?.cpf === cpf) {
+                loggedUser = db.users.find(user => user.cpf === cpf) || loggedUser;
+                updateSessionStorage();
+                updateCardLive();
+            }
+            toast('FOTO ATUALIZADA COM SUCESSO!');
+            input.value = '';
+        } catch (_) {
+            toast('FALHA DE CONEXÃO AO ENVIAR FOTO', 'error');
+        }
+    });
+};
 
 function updateCardLive() { if(!loggedUser) return; const setText = (id, val) => { const el = document.getElementById(id);
 if(el) el.innerText = val; }; setText('card-name', loggedUser.nome); setText('card-cat', loggedUser.cat); setText('card-city', `${loggedUser.city} - ${loggedUser.uf || 'PE'}`); setText('card-cpf', loggedUser.cpf);
@@ -2108,62 +2347,75 @@ window.abrirModalPagamento = function(evt, inscPendente) {
     openModal('modal-pix');
 };
 
-window.confirmarInscricaoPendente = function() {
-    if(!currentPayId) return toast("Erro no evento", "error");
-    if(currentInscricaoPendente) { 
-        loggedUser.inscricoes.push(currentInscricaoPendente); 
-        const idx = db.users.findIndex(u => u.cpf === loggedUser.cpf);
-        if(idx > -1) { saveDB('users'); } 
-        updateSessionStorage(); 
-        const catName = currentInscricaoPendente.extraCat ? currentInscricaoPendente.extraCat : loggedUser.cat; 
-        
-        // Notificação Interna (Sininho)
-        window.enviarNotificacao(
-    `Nova Inscrição Pendente: ${loggedUser.nome} - Etapa: ${currentPayId.name} (${catName})`,
-    'EVENT_TEAM',
-    null,
-    currentPayId.id
-);
-        
-        // Notificação Push (Celular)
-        window.dispararPushParaEquipe(currentPayId.id, "Nova Inscrição! 🚴‍♂️", `${loggedUser.nome} se inscreveu em ${currentPayId.name} (${catName}).`);
-        
-        currentInscricaoPendente = null; 
-        renderContent('calendar'); 
-        toast("INSCRIÇÃO REGISTRADA COMO PENDENTE!");
-    } else { 
-        toast("Sua inscrição já foi registrada.", "info"); 
-    } 
-    fecharModal('modal-pix'); 
-};
-window.enviarComprovanteWhatsApp = function(){ 
-    if(!currentPayId) return toast("Erro no evento", "error");
-    if(currentInscricaoPendente) { 
-        loggedUser.inscricoes.push(currentInscricaoPendente); 
-        const idx = db.users.findIndex(u => u.cpf === loggedUser.cpf);
-        if(idx > -1) { saveDB('users'); } 
-        updateSessionStorage(); 
-        const catName = currentInscricaoPendente.extraCat ? currentInscricaoPendente.extraCat : loggedUser.cat; 
-        
-        // Notificação Interna (Sininho)
-       window.enviarNotificacao(
-    `Nova Inscrição Pendente: ${loggedUser.nome} - Etapa: ${currentPayId.name} (${catName})`,
-    'EVENT_TEAM',
-    null,
-    currentPayId.id
-);
-        
-        // Notificação Push (Celular)
-        window.dispararPushParaEquipe(currentPayId.id, "Comprovante Enviado! 🧾", `${loggedUser.nome} enviou comprovante para ${currentPayId.name} (${catName}).`);
-        
-        currentInscricaoPendente = null; 
-        renderContent('calendar');
+let rosterRegistrationInProgress = false;
+
+async function commitRosterRegistration(sendReceipt) {
+    if (rosterRegistrationInProgress) return false;
+    if (!currentPayId || !loggedUser) return toast('ENTRE NOVAMENTE PARA CONSULTAR A INSCRIÇÃO.', 'error');
+    const payment = currentPayId;
+    const candidate = currentInscricaoPendente;
+    const viewer = loggedUser;
+    const buttons = ['btn-confirmar-insc', 'btn-ja-paguei'].map(id => document.getElementById(id)).filter(Boolean);
+    let popup = null;
+    let receiptOpened = false;
+    rosterRegistrationInProgress = true;
+    buttons.forEach(button => { button.disabled = true; });
+    try {
+        if (sendReceipt && candidate && typeof window.open === 'function') {
+            popup = window.open('about:blank', '_blank');
+            if (popup) popup.opener = null;
+        }
+        if (candidate) {
+            const profile = db.users.find(user => cleanCPF(user.cpf) === cleanCPF(viewer.cpf) && (!viewer.uid || user.uid === viewer.uid));
+            if (!profile) return toast('ATLETA NÃO ENCONTRADO. ENTRE NOVAMENTE.', 'error');
+            const category = registrationCategoryName(candidate.extraCat || profile.cat);
+            const entries = profile.inscricoes || [];
+            const existing = entries.some(item => String(item.id) === String(candidate.id) && registrationCategoryName(item.extraCat || profile.cat) === category);
+            if (!existing) {
+                profile.inscricoes = [...entries, candidate];
+                if (!await saveDB('users')) return false;
+                const categoryLabel = candidate.extraCat || profile.cat;
+                window.enviarNotificacao('Nova Inscrição Pendente: ' + profile.nome + ' - Etapa: ' + payment.name + ' (' + categoryLabel + ')', 'EVENT_TEAM', null, payment.id);
+                window.dispararPushParaEquipe(payment.id, sendReceipt ? 'Comprovante Enviado! 🧾' : 'Nova Inscrição! 🚴‍♂️',
+                    profile.nome + (sendReceipt ? ' enviou comprovante para ' : ' se inscreveu em ') + payment.name + ' (' + categoryLabel + ').');
+            }
+            if (cleanCPF(loggedUser?.cpf) === cleanCPF(viewer.cpf) && (!viewer.uid || loggedUser.uid === viewer.uid)) {
+                loggedUser = db.users.find(user => cleanCPF(user.cpf) === cleanCPF(viewer.cpf) && (!viewer.uid || user.uid === viewer.uid)) || loggedUser;
+                updateSessionStorage();
+            }
+            renderContent('calendar');
+        }
+        if (currentPayId !== payment || currentInscricaoPendente !== candidate || !loggedUser || cleanCPF(loggedUser.cpf) !== cleanCPF(viewer.cpf) || (viewer.uid && loggedUser.uid !== viewer.uid)) {
+            return true;
+        }
+        currentInscricaoPendente = null;
+        if (sendReceipt) {
+            const event = db.events.find(item => String(item.id) === String(payment.id));
+            const phone = event?.wpp || db.config.phone;
+            const text = 'Olá!\nRealizei o pagamento da inscrição.\n\n*Atleta:* ' + viewer.nome + '\n*Evento:* ' + payment.name + '\n\nSegue o comprovante:';
+            if (popup && phone) {
+                popup.location.replace('https://wa.me/55' + cleanCPF(phone) + '?text=' + encodeURIComponent(text));
+                receiptOpened = true;
+            } else if (phone) {
+                openWhatsApp(phone, text);
+            }
+        } else {
+            toast(candidate ? 'INSCRIÇÃO REGISTRADA COMO PENDENTE!' : 'Sua inscrição já foi registrada.', 'info');
+        }
+        fecharModal('modal-pix');
+        return true;
+    } finally {
+        if (popup && !receiptOpened) popup.close();
+        rosterRegistrationInProgress = false;
+        buttons.forEach(button => { button.disabled = false; });
     }
-    const evt = db.events.find(e => e.id == currentPayId.id); 
-    const phone = (evt && evt.wpp) ? evt.wpp : db.config.phone; 
-    const msg = `Olá!\nRealizei o pagamento da inscrição.\n\n*Atleta:* ${loggedUser.nome}\n*Evento:* ${currentPayId.name}\n\nSegue o comprovante:`; 
-    openWhatsApp(phone, msg); 
-    fecharModal('modal-pix'); 
+}
+
+window.confirmarInscricaoPendente = function() {
+    return commitRosterRegistration(false);
+};
+window.enviarComprovanteWhatsApp = function() {
+    return commitRosterRegistration(true);
 };
 window.verDetalhesEvento = function(id) { 
     const e = db.events.find(x => String(x.id) === String(id)); if(!e) return;
@@ -5190,6 +5442,15 @@ function filterPilots(ctx, force) {
     let listDivId = 'adm-edit-user-list'; if(ctx === 'res') listDivId = 'adm-res-list';
     if(ctx === 'cfg-search') listDivId = 'adm-cfg-list'; if(ctx === 'org') listDivId = 'adm-org-list-search';
     const listDiv = document.getElementById(listDivId);
+    if (ctx === 'edit-user' && !rosterReady()) {
+        const status = rosterStatus === 'offline' || navigator.onLine === false
+            ? 'Sem conexão com o Firebase'
+            : rosterStatus === 'unavailable' ? 'Não foi possível atualizar os cadastros' : 'Atualizando cadastros…';
+        document.getElementById('adm-stat-total').textContent = status;
+        document.getElementById('adm-stat-filter').textContent = '';
+        if (listDiv) { listDiv.style.display = 'none'; listDiv.replaceChildren(); }
+        return;
+    }
     if(term.length < 2 && !force) { if(listDiv) listDiv.style.display = 'none'; return; } 
     let found = db.users.filter(u => (u.nome && u.nome.includes(term)) || (u.cpf && u.cpf.includes(term)) || (u.city && u.city.toUpperCase().includes(term)));
     
@@ -5199,7 +5460,8 @@ function filterPilots(ctx, force) {
         if(ctx === 'edit-user') { 
             const filterCat = document.getElementById('adm-user-filter-cat').value;
             if(filterCat !== 'ALL') found = found.filter(u => u.cat === filterCat);
-            document.getElementById('adm-stat-total').innerText = "Total Geral: " + db.users.length;
+            document.getElementById('adm-stat-total').innerText =
+                (DB_KEY.includes('archive') ? 'Total do histórico: ' : 'Total Geral: ') + rosterState.records.size;
             document.getElementById('adm-stat-filter').innerText = "Lista Atual: " + found.length;
             
             listDiv.innerHTML = found.map(u => { 
@@ -5312,10 +5574,16 @@ window.changeSeason = function(newSeasonKey) {
 // ==========================================
 // FUNÇÕES DE EDIÇÃO DE ATLETAS (SUPER ADMIN)
 // ==========================================
-window.delUser = function(cpf) { 
-    if(!isSuperAdmin(loggedUser)) return toast("Apenas o Super Admin pode excluir usuários", "error");
-    showConfirm("EXCLUIR ATLETA?", "Deseja excluir este atleta permanentemente do banco de dados?", '<i class="fas fa-trash-alt" style="color:var(--pe-red)"></i>', function(res) {
-        if(res) { const idx = db.users.findIndex(u => u.cpf === cpf); if(idx > -1) { db.users.splice(idx, 1); saveDB('users'); filterPilots('edit-user', true); window.logAction(`Excluiu do sistema o atleta CPF: ${cpf}`); toast("ATLETA EXCLUÍDO"); } }
+window.delUser = function(cpf) {
+    if (!isSuperAdmin(loggedUser)) return toast('Apenas o Super Admin pode excluir usuários', 'error');
+    showConfirm('EXCLUIR ATLETA?', 'Deseja excluir este atleta permanentemente do banco de dados?', '<i class="fas fa-trash-alt" style="color:var(--pe-red)"></i>', async confirmed => {
+        if (!confirmed || !isSuperAdmin(loggedUser)) return;
+        const profile = db.users.find(user => user.cpf === cpf);
+        if (!profile) return toast('ATLETA NÃO ENCONTRADO.', 'error');
+        if (!await saveDB('users', {remove:profile})) return;
+        filterPilots('edit-user', true);
+        window.logAction('Excluiu do sistema o atleta CPF: ' + cpf);
+        toast('ATLETA EXCLUÍDO');
     });
 };
 
@@ -5331,7 +5599,7 @@ window.openEditUserModal = function(cpf){
     } 
 };
 
-window.saveSuperEdit = function() { 
+window.saveSuperEdit = async function() { 
     if(!isSuperAdmin(loggedUser)) return;
     const oldCpf = document.getElementById('super-edit-old-cpf').value;
     const idx = db.users.findIndex(x => x.cpf === oldCpf);
@@ -5340,24 +5608,25 @@ window.saveSuperEdit = function() {
         const newName = document.getElementById('super-edit-name').value.toUpperCase(); const newCpf = document.getElementById('super-edit-cpf').value; const newCity = document.getElementById('super-edit-city').value.toUpperCase(); const newUf = document.getElementById('super-edit-uf').value; const newCat = document.getElementById('super-edit-cat').value.toUpperCase();
         const newTel = document.getElementById('super-edit-tel').value; const newNasc = document.getElementById('super-edit-nasc').value; const newCbc = document.getElementById('super-edit-cbc') ? document.getElementById('super-edit-cbc').value : ""; const passField = document.getElementById('super-edit-new-pass');
         const newPassInput = passField ? passField.value.trim() : "";
+        if (newPassInput && newPassInput.length < 6) return toast("A senha deve ter no mínimo 6 dígitos", "error");
         let changes = []; if (oldU.cat !== newCat) changes.push(`Categoria: ${oldU.cat} ➔ ${newCat}`);
         if (oldU.nome !== newName) changes.push(`Nome: ${oldU.nome} ➔ ${newName}`); if (oldU.city !== newCity) changes.push(`Cidade: ${oldU.city} ➔ ${newCity}`);
         if (oldU.uf !== newUf) changes.push(`UF: ${oldU.uf} ➔ ${newUf}`); if (oldU.cbc !== newCbc) changes.push(`CBC: ${oldU.cbc || '(Vazio)'} ➔ ${newCbc || '(Vazio)'}`);
         if (newPassInput !== "") changes.push(`Senha Master Alterada`);
         db.users[idx].nome = newName; db.users[idx].cpf = newCpf; db.users[idx].city = newCity; db.users[idx].uf = newUf;
         db.users[idx].cat = newCat; db.users[idx].tel = newTel; db.users[idx].nasc = newNasc; db.users[idx].cbc = newCbc;
-        if(newPassInput !== "") { if(newPassInput.length < 6) return toast("A senha deve ter no mínimo 6 dígitos", "error"); db.users[idx].adminNewPass = newPassInput; }
-        saveDB('users'); 
+        if (newPassInput) db.users[idx].adminNewPass = newPassInput;
+        if (!await saveDB('users')) return; 
         if(changes.length > 0) { window.logAction(`Editou o atleta ${oldU.nome}. Alterações: ${changes.join(' | ')}`); } else { window.logAction(`Acessou a edição do atleta ${oldU.nome} sem realizar mudanças.`); }
         toast("ALTERADO!"); fecharModal('modal-super-edit'); filterPilots('edit-user', true);
     } 
 };
 
-window.gerarSenhaTemporaria = function() {
+window.gerarSenhaTemporaria = async function() {
     if(!isSuperAdmin(loggedUser)) return; const oldCpf = document.getElementById('super-edit-old-cpf').value;
     const idx = db.users.findIndex(x => x.cpf === oldCpf);
     if(idx > -1) { const pin = Math.floor(100000 + Math.random() * 900000).toString();
-    db.users[idx].tempPass = pin; db.users[idx].tempPassExp = Date.now() + (5 * 60 * 1000); saveDB('users'); const tempDisplay = document.getElementById('super-edit-temp-pass-display');
+    db.users[idx].tempPass = pin; db.users[idx].tempPassExp = Date.now() + (5 * 60 * 1000); if (!await saveDB('users')) return; const tempDisplay = document.getElementById('super-edit-temp-pass-display');
     if(tempDisplay) tempDisplay.innerText = `SENHA: ${pin}`; toast("SENHA TEMPORÁRIA GERADA!"); } else { toast("Usuário não encontrado.", "error"); }
 };
 
@@ -5370,15 +5639,20 @@ window.toggleFiliacaoPE = function(cpf) {
         const titulo = novoStatus ? "CONFIRMAR FILIAÇÃO PE?" : "REMOVER FILIAÇÃO PE?";
         const msg = novoStatus ? `Deseja registrar que <b>${u.nome}</b> é federado em Pernambuco, mesmo sendo do estado de ${u.uf}? Ele passará a pontuar no Ranking Oficial.` : `Deseja remover a filiação pernambucana de <b>${u.nome}</b>?`;
         const icone = `<i class="fas fa-id-card" style="color:var(--pe-blue)"></i>`;
-        showConfirm(titulo, msg, icone, function(res) {
-            if(res) { db.users[idx].filiadoPE = novoStatus; saveDB('users'); if (novoStatus) {
-    dispararPushAtleta(cpf, "Filiação Ativa! 🪪", "Seu status de Filiado em PE foi aprovado. Acelera!");
-} filterPilots('edit-user', true); toast("STATUS DE FILIAÇÃO ATUALIZADO!", "success"); }
+        showConfirm(titulo, msg, icone, async confirmed => {
+            if (!confirmed || !isSuperAdmin(loggedUser)) return;
+            const profile = db.users.find(user => user.cpf === cpf);
+            if (!profile) return toast('ATLETA NÃO ENCONTRADO.', 'error');
+            profile.filiadoPE = novoStatus;
+            if (!await saveDB('users')) return;
+            if (novoStatus) dispararPushAtleta(cpf, 'Filiação Ativa! 🪪', 'Seu status de Filiado em PE foi aprovado. Acelera!');
+            filterPilots('edit-user', true);
+            toast('STATUS DE FILIAÇÃO ATUALIZADO!', 'success');
         });
     }
 };
 
-window.toggleUserId = function(cpf, isReleased) {
+window.toggleUserId = async function(cpf, isReleased) {
 
     if(!isSuperAdmin(loggedUser)) {
         return toast(
@@ -5426,8 +5700,7 @@ window.toggleUserId = function(cpf, isReleased) {
     }
 
 
-    saveDB('users');
-
+    if (!await saveDB('users')) return;
 
     window.logAction(
         `Alterou a carteirinha ${SYSTEM_YEAR} do atleta CPF: ${cpf} para ${
@@ -6036,7 +6309,16 @@ window.demoteOrg = function(cpf) {
     const clean = cleanCPF(cpf); if(clean === "08327632418" || clean === "00000000000") { return showConfirm("AÇÃO BLOQUEADA", "Este usuário é o Administrador Master do sistema e não pode ser removido da equipe.", '<i class="fas fa-shield-alt" style="color:var(--pe-blue)"></i>', null); }
     const idx = db.users.findIndex(x => x.cpf === cpf);
     if(idx > -1) { const userName = db.users[idx].nome || "este organizador";
-    showConfirm("REMOVER DA EQUIPE?", `Tem certeza que deseja remover <b>${userName}</b> do painel de organização? Ele(a) perderá os acessos administrativos.`, '<i class="fas fa-user-times" style="color:var(--pe-red)"></i>', function(res) { if(res) { db.users[idx].role = 'USER'; saveDB('users'); window.logAction(`Removeu o acesso de Organizador de: ${userName} (CPF: ${cpf})`); renderOrgList(); toast("REMOVIDO DA ORGANIZAÇÃO"); } }); } 
+    showConfirm("REMOVER DA EQUIPE?", `Tem certeza que deseja remover <b>${userName}</b> do painel de organização? Ele(a) perderá os acessos administrativos.`, '<i class="fas fa-user-times" style="color:var(--pe-red)"></i>', async confirmed => {
+        if (!confirmed || !isSuperAdmin(loggedUser)) return;
+        const profile = db.users.find(user => user.cpf === cpf);
+        if (!profile) return toast('ATLETA NÃO ENCONTRADO.', 'error');
+        profile.role = 'USER';
+        if (!await saveDB('users')) return;
+        window.logAction(`Removeu o acesso de Organizador de: ${userName} (CPF: ${cpf})`);
+        renderOrgList();
+        toast('REMOVIDO DA ORGANIZAÇÃO');
+    }); } 
 };
 
 window.renderOrgList = function() { 
@@ -6074,8 +6356,8 @@ window.renderOrgList = function() {
 };
 
 window.toggleOrgList = function() { const list = document.getElementById('adm-list-orgs'); const icon = document.getElementById('icon-org-toggle'); if(list.style.display === 'none') { list.style.display='block'; icon.classList.remove('fa-chevron-down'); icon.classList.add('fa-chevron-up'); } else { list.style.display='none'; icon.classList.remove('fa-chevron-up'); icon.classList.add('fa-chevron-down'); } };
-window.promoteToOrganizer = function() { if(!isSuperAdmin(loggedUser)) return toast("Apenas Super Admin pode promover", "error"); const cpf = document.getElementById('adm-org-selected-cpf').value; const idx = db.users.findIndex(u => u.cpf === cpf); if(idx > -1) { const checkboxes = document.querySelectorAll('.org-evt-cb:checked'); const allowed = Array.from(checkboxes).map(c => c.value); db.users[idx].role = 'ORGANIZER';
-db.users[idx].allowedEvts = allowed; saveDB('users'); window.logAction(`Promoveu a Organizador o atleta CPF: ${cpf}`); toast("PROMOVIDO E PERMISSÕES SALVAS!"); renderOrgList(); document.getElementById('adm-org-search').value=''; document.getElementById('org-perms-area').style.display='none'; } };
+window.promoteToOrganizer = async function() { if(!isSuperAdmin(loggedUser)) return toast("Apenas Super Admin pode promover", "error"); const cpf = document.getElementById('adm-org-selected-cpf').value; const idx = db.users.findIndex(u => u.cpf === cpf); if(idx > -1) { const checkboxes = document.querySelectorAll('.org-evt-cb:checked'); const allowed = Array.from(checkboxes).map(c => c.value); db.users[idx].role = 'ORGANIZER';
+db.users[idx].allowedEvts = allowed; if (!await saveDB('users')) return; window.logAction(`Promoveu a Organizador o atleta CPF: ${cpf}`); toast("PROMOVIDO E PERMISSÕES SALVAS!"); renderOrgList(); document.getElementById('adm-org-search').value=''; document.getElementById('org-perms-area').style.display='none'; } };
 window.selectOrgPilot = function(cpf, name) { document.getElementById('adm-org-selected-cpf').value = cpf; document.getElementById('adm-org-search').value = name; document.getElementById('adm-org-list-search').style.display = 'none'; document.getElementById('org-perms-area').style.display = 'block'; };
 window.compartilListaInscritos = function() {
     const evtId = document.getElementById('fin-evt-select').value;
@@ -6308,7 +6590,7 @@ window.importarExcelTempos = function(event) {
     toast("LENDO PLANILHA E CALCULANDO...", "info");
     const reader = new FileReader();
     
-    reader.onload = function(e) {
+    reader.onload = async function(e) {
         try {
             const data = new Uint8Array(e.target.result);
             const workbook = XLSX.read(data, {type: 'array'});
@@ -6400,7 +6682,7 @@ window.importarExcelTempos = function(event) {
             });
 
             if(contagemSalvos > 0) {
-                saveDB(['tempos', 'users']); 
+                if (!await saveDB(['tempos', 'users'])) return; 
                 toast(`✅ ${contagemSalvos} RESULTADOS SALVOS NO BANCO!`);
                 renderAdmResults();
                 recalcRanking();
@@ -7274,7 +7556,7 @@ window.importarExcelTempos = function(event) {
     toast("LENDO PLANILHA E CALCULANDO...", "info");
     const reader = new FileReader();
     
-    reader.onload = function(e) {
+    reader.onload = async function(e) {
         try {
             const data = new Uint8Array(e.target.result);
             const workbook = XLSX.read(data, {type: 'array'});
@@ -7376,7 +7658,7 @@ window.importarExcelTempos = function(event) {
             });
 
             if(contagemSalvos > 0) {
-                saveDB(['tempos', 'users']); 
+                if (!await saveDB(['tempos', 'users'])) return; 
                 toast(`✅ REGISTROS LIDOS E ATUALIZADOS!`);
                 renderAdmResults();
                 recalcRanking();
@@ -7413,21 +7695,26 @@ window.addResult = function() {
     // NOVO: Inclui a placa (num) no objeto salvo no banco
     const newTime = { evtId: evtId, cpf: cpf, name: name.toUpperCase(), city: city, cat: cat, val: val, status: 'OK', runType: runTypeManual, num: numPlaca };
     const existingIndex = editIdxInput !== "" ? parseInt(editIdxInput, 10) : db.tempos.findIndex(t => t && String(t.evtId) === String(evtId) && t.cpf === cpf && t.runType === runTypeManual && t.cat === cat );
-    const performSave = (idx) => { 
+    const performSave = async (idx) => { 
         if(idx > -1) { db.tempos[idx] = newTime;
         } else { db.tempos.push(newTime); } 
         
-        // NOVO: Salva a placa também no cadastro principal do atleta
+        let changedProfile = false;
+        // A placa também é gravada no cadastro do atleta.
         if(numPlaca) {
             let uIdx = db.users.findIndex(u => u.cpf === cpf);
             if(uIdx > -1) {
                 db.users[uIdx].numero = numPlaca;
                 (db.users[uIdx].inscricoes || []).filter(i => String(i.id) === String(evtId)).forEach(i => { i.placa = numPlaca; });
-                saveDB('users');
+                changedProfile = true;
             }
         }
 
-        saveDB('tempos');
+        if (changedProfile) {
+            if (!await saveDB(['tempos', 'users'])) return;
+        } else {
+            saveDB('tempos');
+        }
         dispararPushAtleta(cpf, "Tempo Registrado! ⏱️", `Seu tempo de ${val} acabou de entrar no sistema. Confira sua posição!`); 
         toast("✅ TEMPO ATUALIZADO NO SISTEMA!"); 
         clearResultFormUI(); renderAdmResults(); recalcRanking(); 
@@ -8038,7 +8325,14 @@ window.restoreBackup = function() { if(!isSuperAdmin(loggedUser) && (!loggedUser
 if(input) input.click(); };
 window.processRestoreFile = function(input) { const file = input.files[0]; if(!file) return; const reader = new FileReader();
 reader.onload = function(e) { try { const restoredDb = JSON.parse(e.target.result);
-if(restoredDb && Array.isArray(restoredDb.users)) { showConfirm("RESTAURAR DADOS?", "Isso substituirá TODOS os dados atuais pelos do backup. Continuar?", '<i class="fas fa-exclamation-triangle" style="color:var(--pe-red)"></i>', function(res) { if(res) { db = restoredDb; saveDB(); toast("DADOS RESTAURADOS!"); setTimeout(() => window.location.reload(), 1500); } });
+if(restoredDb && Array.isArray(restoredDb.users)) { showConfirm("RESTAURAR DADOS?", "Isso substituirá TODOS os dados atuais pelos do backup. Continuar?", '<i class="fas fa-exclamation-triangle" style="color:var(--pe-red)"></i>', async function(res) {
+    if (!res || !await saveDB('users', {restore:restoredDb.users})) return;
+    // Os cadastros já foram confirmados pelo servidor. Não os inclua em outra gravação.
+    db = {...restoredDb, users:db.users};
+    saveDB();
+    toast("CADASTROS RESTAURADOS. ATUALIZANDO OS DEMAIS DADOS DO BACKUP...", 'info');
+    setTimeout(() => window.location.reload(), 1500);
+});
 } else { toast("ARQUIVO INVÁLIDO", "error"); } } catch(err) { console.error(err); toast("ERRO AO LER ARQUIVO", "error"); } }; reader.readAsText(file); };
 
 // ==========================================================
@@ -8183,23 +8477,23 @@ window.renderInscriptions = function() {
 
 window.isentarInscricao = function(cpf, evtId, cat, botaoAcao = null) {
     if (!canManageEvent(evtId)) return toast("SEM PERMISSÃO NESTE EVENTO", "error");
-    showConfirm("ISENTAR INSCRIÇÃO?", "Deseja isentar o pagamento e aprovar este atleta?", '<i class="fas fa-handshake" style="color:#0284c7"></i>', function(res) {
+    showConfirm("ISENTAR INSCRIÇÃO?", "Deseja isentar o pagamento e aprovar este atleta?", '<i class="fas fa-handshake" style="color:#0284c7"></i>', async function(res) {
         if(res) {
-            const uIdx = db.users.findIndex(u => u.cpf === cpf);
-            if(uIdx > -1 && db.users[uIdx].inscricoes) {
-                const iIdx = db.users[uIdx].inscricoes.findIndex(i => String(i.id) === String(evtId) && window.normalizeCatName(i.extraCat || db.users[uIdx].cat).replace(" (EXTRA)", "") === cat.replace(" (EXTRA)", ""));
+            const athlete = db.users.find(user => user.cpf === cpf);
+            if (athlete?.inscricoes) {
+                const iIdx = athlete.inscricoes.findIndex(i => String(i.id) === String(evtId) && window.normalizeCatName(i.extraCat || athlete.cat).replace(" (EXTRA)", "") === cat.replace(" (EXTRA)", ""));
                 
                 if(iIdx > -1) {
-                    if (!salvarPlacaNoAtoDaAprovacao(cpf, evtId, botaoAcao)) return;
-                    db.users[uIdx].inscricoes[iIdx].status = 'ISENTO';
-                    saveDB('users');
-                    window.logAction(`Isentou a inscrição de ${db.users[uIdx].nome} (Cat: ${cat}) no evento ID: ${evtId}`);
+                    if (!salvarPlacaNoAtoDaAprovacao(cpf, evtId, botaoAcao, false)) return;
+                    athlete.inscricoes[iIdx].status = 'ISENTO';
+                    if (!await saveDB('users')) return;
+                    window.logAction(`Isentou a inscrição de ${athlete.nome} (Cat: ${cat}) no evento ID: ${evtId}`);
                     window.enviarNotificacao(`Sua inscrição foi ISENTA na categoria ${cat}. Acelera!`, 'USER', cpf, evtId);
                     
                     try {
-                        if (database && db.users[uIdx].fcmToken) {
+                        if (database && athlete.fcmToken) {
                             database.ref('push_queue').push({
-                                token: db.users[uIdx].fcmToken,
+                                token: athlete.fcmToken,
                                 title: "Inscrição Isenta! 🤝",
                                 body: `Sua inscrição na categoria ${cat} foi isenta pela organização.`,
                                 status: "pending",
@@ -8231,25 +8525,25 @@ window.filtrarAtletasStatus = function() {
 // FIX APLICADO NO APROVARINSCRIÇÃO: Agora ele faz o .replace(" (EXTRA)", "") nos dois lados da verificação
 window.aprovarInscricao = function(cpf, evtId, cat, botaoAcao = null) {
     if (!canManageEvent(evtId)) return toast("SEM PERMISSÃO NESTE EVENTO", "error");
-    showConfirm("APROVAR INSCRIÇÃO?", "Confirmar o recebimento do pagamento e liberar o atleta?", '<i class="fas fa-check-circle" style="color:#009b3a"></i>', function(res) {
+    showConfirm("APROVAR INSCRIÇÃO?", "Confirmar o recebimento do pagamento e liberar o atleta?", '<i class="fas fa-check-circle" style="color:#009b3a"></i>', async function(res) {
         if(res) {
-            const uIdx = db.users.findIndex(u => u.cpf === cpf);
-            if(uIdx > -1 && db.users[uIdx].inscricoes) {
-                const iIdx = db.users[uIdx].inscricoes.findIndex(i => String(i.id) === String(evtId) && window.normalizeCatName(i.extraCat || db.users[uIdx].cat).replace(" (EXTRA)", "") === cat.replace(" (EXTRA)", ""));
+            const athlete = db.users.find(user => user.cpf === cpf);
+            if (athlete?.inscricoes) {
+                const iIdx = athlete.inscricoes.findIndex(i => String(i.id) === String(evtId) && window.normalizeCatName(i.extraCat || athlete.cat).replace(" (EXTRA)", "") === cat.replace(" (EXTRA)", ""));
                 
                 if(iIdx > -1) {
-                    if (!salvarPlacaNoAtoDaAprovacao(cpf, evtId, botaoAcao)) return;
-                    db.users[uIdx].inscricoes[iIdx].status = 'CONFIRMADO';
-                    saveDB('users');
-                    const author = loggedUser.nome;
-                    window.logAction(`Aprovou a inscrição de ${db.users[uIdx].nome} (Cat: ${cat}) no evento ID: ${evtId}`);
+                    if (!salvarPlacaNoAtoDaAprovacao(cpf, evtId, botaoAcao, false)) return;
+                    athlete.inscricoes[iIdx].status = 'CONFIRMADO';
+                    if (!await saveDB('users')) return;
+                    const author = loggedUser?.nome || "Organização";
+                    window.logAction(`Aprovou a inscrição de ${athlete.nome} (Cat: ${cat}) no evento ID: ${evtId}`);
                     window.enviarNotificacao(`✅ Seu pagamento foi aprovado! Inscrição confirmada na categoria ${cat}.`, 'USER', cpf, evtId);
-                    window.enviarNotificacao(`✅ O(a) org. ${author} APROVOU a inscrição de ${db.users[uIdx].nome} (${cat}).`, 'ADMIN', null, evtId);
+                    window.enviarNotificacao(`✅ O(a) org. ${author} APROVOU a inscrição de ${athlete.nome} (${cat}).`, 'ADMIN', null, evtId);
                     
                     try {
-                        if (database && db.users[uIdx].fcmToken) {
+                        if (database && athlete.fcmToken) {
                             database.ref('push_queue').push({
-                                token: db.users[uIdx].fcmToken,
+                                token: athlete.fcmToken,
                                 title: "Inscrição Aprovada! 🚵‍♂️",
                                 body: `Sua inscrição na categoria ${cat} foi confirmada pela organização.`,
                                 status: "pending",
@@ -8272,17 +8566,17 @@ window.aprovarInscricao = function(cpf, evtId, cat, botaoAcao = null) {
 
 window.estornarInscricao = function(cpf, evtId, cat) {
     if(!isSuperAdmin(loggedUser) && loggedUser.role !== 'ORGANIZER') return toast("SEM PERMISSÃO", "error");
-    showConfirm("VOLTAR PARA PENDENTE?", "Deseja remover a confirmação de pagamento deste atleta?", '<i class="fas fa-undo" style="color:#d50000"></i>', function(res) {
+    showConfirm("VOLTAR PARA PENDENTE?", "Deseja remover a confirmação de pagamento deste atleta?", '<i class="fas fa-undo" style="color:#d50000"></i>', async function(res) {
         if(res) {
-            const uIdx = db.users.findIndex(u => u.cpf === cpf);
-            if(uIdx > -1 && db.users[uIdx].inscricoes) {
-                const iIdx = db.users[uIdx].inscricoes.findIndex(i => String(i.id) === String(evtId) && window.normalizeCatName(i.extraCat || db.users[uIdx].cat).replace(" (EXTRA)", "") === cat.replace(" (EXTRA)", ""));
+            const athlete = db.users.find(user => user.cpf === cpf);
+            if (athlete?.inscricoes) {
+                const iIdx = athlete.inscricoes.findIndex(i => String(i.id) === String(evtId) && window.normalizeCatName(i.extraCat || athlete.cat).replace(" (EXTRA)", "") === cat.replace(" (EXTRA)", ""));
                 
                 if(iIdx > -1) {
-                    db.users[uIdx].inscricoes[iIdx].status = 'PENDENTE';
-                    saveDB('users');
-                    const author = loggedUser.nome;
-                    window.logAction(`Estornou a inscrição de ${db.users[uIdx].nome} (Cat: ${cat}) no evento ID: ${evtId} para PENDENTE`);
+                    athlete.inscricoes[iIdx].status = 'PENDENTE';
+                    if (!await saveDB('users')) return;
+                    const author = loggedUser?.nome || "Organização";
+                    window.logAction(`Estornou a inscrição de ${athlete.nome} (Cat: ${cat}) no evento ID: ${evtId} para PENDENTE`);
                     dispararPushAtleta(cpf, "Inscrição Pendente ⚠️", "Sua inscrição voltou para o status pendente (Estorno).");
                     
                     toast("INSCRIÇÃO ESTORNADA!");
@@ -8297,17 +8591,17 @@ window.estornarInscricao = function(cpf, evtId, cat) {
 
 window.removerInscricao = function(cpf, evtId, cat) {
     if(!isSuperAdmin(loggedUser) && loggedUser.role !== 'ORGANIZER') return toast("SEM PERMISSÃO", "error");
-    showConfirm("APAGAR INSCRIÇÃO?", "Esta ação removerá completamente a inscrição do atleta neste evento.", '<i class="fas fa-trash" style="color:#d50000"></i>', function(res) {
+    showConfirm("APAGAR INSCRIÇÃO?", "Esta ação removerá completamente a inscrição do atleta neste evento.", '<i class="fas fa-trash" style="color:#d50000"></i>', async function(res) {
         if(res) {
-            const uIdx = db.users.findIndex(u => u.cpf === cpf);
-            if(uIdx > -1 && db.users[uIdx].inscricoes) {
-                const iIdx = db.users[uIdx].inscricoes.findIndex(i => String(i.id) === String(evtId) && window.normalizeCatName(i.extraCat || db.users[uIdx].cat).replace(" (EXTRA)", "") === cat.replace(" (EXTRA)", ""));
+            const athlete = db.users.find(user => user.cpf === cpf);
+            if (athlete?.inscricoes) {
+                const iIdx = athlete.inscricoes.findIndex(i => String(i.id) === String(evtId) && window.normalizeCatName(i.extraCat || athlete.cat).replace(" (EXTRA)", "") === cat.replace(" (EXTRA)", ""));
                 
                 if(iIdx > -1) {
-                    db.users[uIdx].inscricoes.splice(iIdx, 1);
-                    saveDB('users');
-                    const author = loggedUser.nome;
-                    window.logAction(`Apagou a inscrição de ${db.users[uIdx].nome} (Cat: ${cat}) no evento ID: ${evtId}`);
+                    athlete.inscricoes.splice(iIdx, 1);
+                    if (!await saveDB('users')) return;
+                    const author = loggedUser?.nome || "Organização";
+                    window.logAction(`Apagou a inscrição de ${athlete.nome} (Cat: ${cat}) no evento ID: ${evtId}`);
                     dispararPushAtleta(cpf, "Inscrição Excluída ❌", "Sua inscrição na etapa foi removida pela organização.");
                     
                     toast("INSCRIÇÃO APAGADA!");
@@ -8960,12 +9254,13 @@ window.solicitarPermissaoPush = async function() {
                 if (db.users[uIdx].fcmToken !== token) {
 
                     db.users[uIdx].fcmToken = token;
-                    loggedUser.fcmToken = token;
-
-                    saveDB("users");
-                    updateSessionStorage();
-
-                    console.log("[PUSH] Token salvo no usuário.");
+                    if (await saveDB("users", {quiet:true})) {
+                        if (loggedUser && cleanCPF(loggedUser.cpf) === cpfAtual) {
+                            loggedUser.fcmToken = token;
+                            updateSessionStorage();
+                        }
+                        console.log("[PUSH] Token salvo no usuário.");
+                    }
                 }
             }
         }
