@@ -16,6 +16,7 @@
         let authReady = false, sdkConnected = false, epoch = 0, scheduled = null, lastIdentity = '', verifiedIdentity = '', publicHint;
         let pendingSave = null, errorVisible = false;
         let lastGrantedIdentity = '', resumeIdentity = '', resumeTimer = null;
+        let waitingIdentity = '', connectionTimer = null, connectionExpired = false;
         const signals = new Map(), inertBefore = new Map();
         let gate, title, message, loginButton, logoutButton;
 
@@ -97,17 +98,25 @@
                 for (const button of [loginButton, logoutButton, retry]) button.style.cssText = 'padding:12px 20px;border-radius:8px;border:1px solid #94a3b8;cursor:pointer;font-weight:bold;';
                 loginButton.addEventListener('click', beginLogin);
                 logoutButton.addEventListener('click', () => { beginLogin(false); if (typeof options.onLogout === 'function') options.onLogout(); });
-                retry.addEventListener('click', () => schedule(true));
+                retry.addEventListener('click', () => {
+                    waitForConnection('');
+                    schedule(true);
+                });
                 for (const child of [title, message, loginButton, logoutButton, retry]) gate.appendChild(child);
                 doc.body.appendChild(gate);
             }
-            const mode = state.allowed ? 'allowed' : (state.loginRequested ? 'login' : (state.ready || errorVisible ? 'blocked' : 'pending'));
+            const checkingConnection = !!waitingIdentity && !sdkConnected;
+            const unavailable = errorVisible || (checkingConnection && connectionExpired);
+            let mode = 'pending';
+            if (state.allowed) mode = 'allowed';
+            else if (state.loginRequested) mode = 'login';
+            else if (unavailable || (state.ready && !checkingConnection)) mode = 'blocked';
             if (doc.documentElement) doc.documentElement.setAttribute('data-dhnd-maintenance', mode);
             const covered = mode === 'pending' || mode === 'blocked';
             gate.style.display = mode === 'blocked' ? 'flex' : 'none';
-            title.textContent = errorVisible ? 'ACESSO INDISPONÍVEL' : 'SISTEMA EM MANUTENÇÃO';
-            message.textContent = state.message;
-            loginButton.style.display = state.ready && state.enabled ? '' : 'none';
+            title.textContent = unavailable ? 'ACESSO INDISPONÍVEL' : 'SISTEMA EM MANUTENÇÃO';
+            message.textContent = unavailable ? UNAVAILABLE : state.message;
+            loginButton.style.display = state.ready && state.enabled && !unavailable ? '' : 'none';
             logoutButton.style.display = auth.currentUser || capture().cpf ? '' : 'none';
             for (const child of Array.from(doc.body.children || [])) {
                 if (child === gate) continue;
@@ -128,6 +137,20 @@
         function pending() {
             errorVisible = false;
             publish({ready:false, allowed:false, admin:false, message:CHECKING});
+        }
+        function waitForConnection(key) {
+            if (key === waitingIdentity) return;
+            if (connectionTimer !== null) global.clearTimeout(connectionTimer);
+            waitingIdentity = key;
+            connectionTimer = null;
+            connectionExpired = false;
+            if (key) {
+                connectionTimer = global.setTimeout(() => {
+                    connectionTimer = null;
+                    connectionExpired = true;
+                    render();
+                }, 10000);
+            }
         }
         function signal(name, path, baseline) {
             const previous = signals.get(name);
@@ -178,12 +201,14 @@
                 current(actor, version);
                 verifiedIdentity = actor.key;
                 errorVisible = false;
-                publish({ready:true, enabled:policy.enabled, allowed, admin, message:policy.message,
-                    waitingForConnection:policy.enabled && actor.matches && !sdkConnected && !verifiedResume(),
+                const waitingForConnection = policy.enabled && actor.matches && !sdkConnected && !verifiedResume();
+                waitForConnection(waitingForConnection ? actor.key : '');
+                publish({ready:true, enabled:policy.enabled, allowed, admin, message:policy.message, waitingForConnection,
                     loginRequested:allowed ? false : state.loginRequested});
             } catch (error) {
                 if (error.code === 'maintenance/stale') return;
                 if (version !== epoch) return;
+                waitForConnection('');
                 errorVisible = true;
                 publish({ready:false, allowed:false, admin:false, message:UNAVAILABLE});
             }
@@ -202,6 +227,7 @@
             return schedule(false);
         }
         function beginLogin(callHandler = true) {
+            waitForConnection('');
             lastGrantedIdentity = '';
             resumeIdentity = '';
             epoch++;
@@ -273,6 +299,7 @@
             schedule(false);
         }, () => {
             authReady = false;
+            waitForConnection('');
             lastGrantedIdentity = '';
             resumeIdentity = '';
             epoch++;
@@ -289,6 +316,7 @@
             const wasConnected = sdkConnected;
             sdkConnected = snapshot.val() === true;
             if (sdkConnected) {
+                waitForConnection('');
                 resumeIdentity = '';
                 schedule(false);
             } else if (wasConnected && state.enabled) {
@@ -309,6 +337,7 @@
         });
         if (global.addEventListener) {
             global.addEventListener('offline', () => {
+                waitForConnection('');
                 resumeIdentity = '';
                 if (resumeTimer !== null) global.clearTimeout(resumeTimer);
                 resumeTimer = null;

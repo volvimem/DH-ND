@@ -188,13 +188,46 @@ async function runSuite(options={}) {
     assert.equal(h.gate.guard(),true);
     assert.equal(h.changes.length,before,'Signing in must not reopen the maintenance screen when off');
   });
-  await test('active maintenance never admits a tester before the SDK connects',async()=>{
+  await test('an authenticated tester sees pending startup until the SDK connects and permission is confirmed',async()=>{
     const h=await started({remote:{sdkConnected:false,own:true}});
+    const dialog=h.nodes.get('dhnd-maintenance-gate');
     assert.equal(h.gate.state.enabled,true);
     assert.equal(h.gate.guard(),false);
-    assert.equal(h.nodes.get('dhnd-maintenance-gate').style.display,'flex');
+    assert.equal(dialog.style.display,'none');
     await h.emitSdk('.info/connected',true);
     assert.equal(h.gate.guard(),true);
+    assert.equal(dialog.style.display,'none');
+  });
+  await test('an SDK timeout shows connection unavailable and recovers after a fresh verification',async()=>{
+    const h=await started({remote:{sdkConnected:false,own:true}});
+    const dialog=h.nodes.get('dhnd-maintenance-gate');
+    await h.advance(9999);
+    assert.equal(dialog.style.display,'none');
+    await h.advance(1);
+    assert.equal(h.gate.guard(),false);
+    assert.equal(dialog.style.display,'flex');
+    assert.equal(dialog.children[0].textContent,'ACESSO INDISPONÍVEL');
+    await h.emitSdk('.info/connected',true);
+    assert.equal(h.gate.guard(),true);
+    assert.equal(dialog.style.display,'none');
+  });
+  await test('a confirmed unauthorised session sees maintenance after connection',async()=>{
+    const h=await started({remote:{sdkConnected:false,own:false}});
+    const dialog=h.nodes.get('dhnd-maintenance-gate');
+    assert.equal(dialog.style.display,'none');
+    await h.emitSdk('.info/connected',true);
+    assert.equal(h.gate.guard(),false);
+    assert.equal(dialog.style.display,'flex');
+    assert.equal(dialog.children[0].textContent,'SISTEMA EM MANUTENÇÃO');
+  });
+  await test('a login request after sign-out survives startup with active maintenance',async()=>{
+    const h=setup(source,{profile:null,remote:{sdkConnected:false}});
+    h.gate.beginLogin(false);
+    await h.emitAuth(null);
+    await h.emitSdk('.info/connected',true);
+    assert.equal(h.gate.state.loginRequested,true);
+    assert.equal(h.gate.guard(),false);
+    assert.equal(h.nodes.get('dhnd-maintenance-gate').style.display,'none');
   });
   await test('losing the Firebase SDK connection revokes an existing admission immediately',async()=>{
     const h=await started({remote:{own:true}});assert.equal(h.gate.guard(),true);await h.emitSdk('.info/connected',false);assert.equal(h.gate.guard(),false);assert.equal(h.gate.state.allowed,false);

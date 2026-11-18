@@ -572,6 +572,25 @@ try {
 
 // ==========================================================
 // Modo de manutenção separado dos dados de temporada.
+function loadStartupSession() {
+    try {
+        if (sessionStorage.getItem('dhnd_login_after_logout') === '1') {
+            try { sessionStorage.removeItem('dhnd_login_after_logout'); } catch (_) {}
+            return true;
+        }
+    } catch (_) {}
+    try {
+        const persistent = localStorage.getItem(SESS_KEY);
+        const stored = persistent || sessionStorage.getItem(SESS_KEY);
+        const profile = stored && JSON.parse(stored);
+        if (profile && /^\d{11}$/.test(cleanCPF(profile.cpf))) {
+            maintenanceSavedSession = {user:profile, remember:!!persistent};
+        }
+    } catch (_) {}
+    return false;
+}
+
+const showLoginAfterLogout = loadStartupSession();
 window.dhndMaintenance = window.DHNDMaintenance.create({
     database, auth, databaseURL: firebaseConfig.databaseURL,
     identity: () => loggedUser || maintenanceRestoringUser || maintenanceSavedSession?.user,
@@ -579,6 +598,7 @@ window.dhndMaintenance = window.DHNDMaintenance.create({
     onLogin: () => mostrarLoginInicial(),
     onLogout: () => window.fazerLogout()
 });
+if (showLoginAfterLogout) window.dhndMaintenance.beginLogin(false);
 // CONTROLE DE PRAZOS DO EVENTO / INSCRIÇÕES
 // ==========================================================
 
@@ -1533,19 +1553,18 @@ document.addEventListener("DOMContentLoaded", function() {
     const eventYearField = document.getElementById('adm-evt-year');
     if (eventYearField && !eventYearField.value) eventYearField.value = String(SYSTEM_YEAR);
     
-    let savedSession = localStorage.getItem(SESS_KEY) || sessionStorage.getItem(SESS_KEY);
-    if(savedSession) { 
-        try { 
-            const u = JSON.parse(savedSession);
+    if (maintenanceSavedSession) {
+        try {
+            const {user, remember} = maintenanceSavedSession;
             // Garante que a configuração base exista antes de montar a tela
             if(!db.config) db.config = { phone: '', rerunPass: 'admin123', allowAllIDs: false, categories: DEFAULT_CATS };
             if(db.users && !Array.isArray(db.users)) db.users = Object.values(db.users);
             if(db.users) db.users = db.users.filter(x => x !== null && x !== undefined);
-            const uid = auth?.currentUser?.uid || u.uid;
+            const uid = auth?.currentUser?.uid || user.uid;
             const fresh = uid && DB_KEY === loginProfileRoot()
-                ? selectAuthenticatedProfile(db.users, cleanCPF(u.cpf), uid).user
+                ? selectAuthenticatedProfile(db.users, cleanCPF(user.cpf), uid).user
                 : null;
-            maintenanceSavedSession = {user:fresh || u, remember:!!localStorage.getItem(SESS_KEY)}; 
+            maintenanceSavedSession = {user:fresh || user, remember};
             
             if(localStorage.getItem('draft_evt_t')) document.getElementById('adm-evt-t').value = localStorage.getItem('draft_evt_t'); 
             if(localStorage.getItem('draft_evt_d')) document.getElementById('adm-evt-d').value = localStorage.getItem('draft_evt_d'); 
@@ -1879,12 +1898,28 @@ window.fazerLogout = async function() {
         toast('NÃO FOI POSSÍVEL ENCERRAR A SESSÃO. TENTE NOVAMENTE.', 'error');
         return;
     }
-    try { sessionStorage.removeItem(SESS_KEY); } catch (_) {}
+    let loginAfterReload = false;
+    try {
+        sessionStorage.removeItem(SESS_KEY);
+        sessionStorage.setItem('dhnd_login_after_logout', '1');
+        loginAfterReload = true;
+    } catch (_) {}
     try {
         for (const key of [SESS_KEY, LAST_TAB_KEY, LAST_ADM_KEY]) localStorage.removeItem(key);
     } catch (_) {}
     loggedUser = null;
-    window.location.reload();
+    maintenanceSavedSession = null;
+    maintenanceRestoringUser = null;
+    window.dhndMaintenance?.beginLogin(false);
+    if (loginAfterReload) {
+        window.location.reload();
+        return;
+    }
+    for (const id of ['login-cpf', 'login-pass']) {
+        const input = document.getElementById(id);
+        if (input) input.value = '';
+    }
+    mostrarLoginInicial();
 };
 let registrationAccountSaving = false;
 window.cadastrar = async function() {
