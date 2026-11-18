@@ -56,7 +56,18 @@ function mainMaintenanceChanged(state) {
     if (maintenanceDomReady && state.ready && maintenanceSavedSession) {
         const saved = maintenanceSavedSession;
         maintenanceSavedSession = null;
-        if (!state.enabled) loggedUser = saved.user;
+        if (!state.enabled) {
+            const account = auth?.currentUser;
+            const email = cleanCPF(saved.user.cpf) + '@dhpe.com.br';
+            const mismatched = account && (String(account.email || '').toLowerCase() !== email ||
+                (saved.user.uid && saved.user.uid !== account.uid));
+            if (mismatched) {
+                try { localStorage.removeItem(SESS_KEY); } catch (_) {}
+                try { sessionStorage.removeItem(SESS_KEY); } catch (_) {}
+            } else {
+                loggedUser = saved.user;
+            }
+        }
         else if (auth && auth.currentUser && String(auth.currentUser.email || '').toLowerCase() === cleanCPF(saved.user.cpf) + '@dhpe.com.br') {
             void finishLogin(cleanCPF(saved.user.cpf), saved.remember);
         }
@@ -862,8 +873,15 @@ function startDatabaseSync() {
             if(data.events && !Array.isArray(data.events)) data.events = Object.values(data.events);
             if(data.notifications && !Array.isArray(data.notifications)) data.notifications = Object.values(data.notifications);
             if(data.auditLog && !Array.isArray(data.auditLog)) data.auditLog = Object.values(data.auditLog);
-            db = data; checkDbIntegrity(); localStorage.setItem(DB_KEY, JSON.stringify(db));
-            if(loggedUser) { const fresh = db.users.find(u => cleanCPF(u.cpf) === cleanCPF(loggedUser.cpf)); if(fresh) { loggedUser = fresh; updateSessionStorage(); } }
+            db = data; checkDbIntegrity();
+            try { localStorage.setItem(DB_KEY, JSON.stringify(db)); } catch (_) {}
+            if (loggedUser) {
+                const uid = auth?.currentUser?.uid || loggedUser.uid;
+                const fresh = uid && typeof selectAuthenticatedProfile === 'function'
+                    ? selectAuthenticatedProfile(db.users, cleanCPF(loggedUser.cpf), uid).user
+                    : db.users.find(u => cleanCPF(u.cpf) === cleanCPF(loggedUser.cpf));
+                if (fresh) { loggedUser = fresh; updateSessionStorage(); }
+            }
             refreshCurrentView(); atualizarBadgeNotificacoes();
             if (window.liveTimingWindow && !window.liveTimingWindow.closed) { if (typeof gatherAndPushData === 'function') gatherAndPushData(window.liveTimingWindow); }
         }
@@ -871,8 +889,12 @@ function startDatabaseSync() {
 }
 if (database) startDatabaseSync();
 
-function updateSessionStorage() { if(localStorage.getItem(SESS_KEY)) localStorage.setItem(SESS_KEY, JSON.stringify(loggedUser));
-else sessionStorage.setItem(SESS_KEY, JSON.stringify(loggedUser)); }
+function updateSessionStorage() {
+    try {
+        const store = localStorage.getItem(SESS_KEY) ? localStorage : sessionStorage;
+        store.setItem(SESS_KEY, JSON.stringify(loggedUser));
+    } catch (_) {}
+}
 
 function refreshCurrentView() {
     if (!maintenanceAllowsApp()) return;
@@ -1306,7 +1328,10 @@ document.addEventListener("DOMContentLoaded", function() {
             if(!db.config) db.config = { phone: '', rerunPass: 'admin123', allowAllIDs: false, categories: DEFAULT_CATS };
             if(db.users && !Array.isArray(db.users)) db.users = Object.values(db.users);
             if(db.users) db.users = db.users.filter(x => x !== null && x !== undefined);
-            const fresh = (db.users || []).find(x => x && x.cpf && cleanCPF(x.cpf) === cleanCPF(u.cpf)); 
+            const uid = auth?.currentUser?.uid || u.uid;
+            const fresh = uid && DB_KEY === loginProfileRoot()
+                ? selectAuthenticatedProfile(db.users, cleanCPF(u.cpf), uid).user
+                : null;
             maintenanceSavedSession = {user:fresh || u, remember:!!localStorage.getItem(SESS_KEY)}; 
             
             if(localStorage.getItem('draft_evt_t')) document.getElementById('adm-evt-t').value = localStorage.getItem('draft_evt_t'); 
@@ -1460,257 +1485,192 @@ if (input.type === "password") { input.type = "text"; icon.classList.remove("fa-
 // ==========================================================
 // 7. SISTEMA DE LOGIN, CADASTRO E CONTAS
 // ==========================================================
+let loginInProgress = false;
+
 window.fazerLogin = async function() {
+    if (loginInProgress) return false;
 
-    const cpfRaw =
-        document.getElementById('login-cpf').value;
-
-    const passRaw =
-        document.getElementById('login-pass').value;
-
-    const remember =
-        document.getElementById('login-remember').checked;
-
-
-    if (!cpfRaw || !passRaw) {
-        return toast("PREENCHA TUDO", "error");
+    const cpf = cleanCPF(document.getElementById('login-cpf').value);
+    const password = document.getElementById('login-pass').value;
+    const remember = document.getElementById('login-remember').checked;
+    if (!/^\d{11}$/.test(cpf)) {
+        toast('INFORME UM CPF COM 11 DÍGITOS.', 'error');
+        return false;
+    }
+    if (!password) {
+        toast('INFORME SUA SENHA.', 'error');
+        return false;
     }
 
-
-    const clean =
-        cleanCPF(cpfRaw);
-
-    const emailFake =
-        clean + "@dhpe.com.br";
-
-    const authPass =
-        passRaw.length < 6
-            ? passRaw.padEnd(6, '0')
-            : passRaw;
-
-
-    toast(
-        "AUTENTICANDO...",
-        "info"
-    );
-
-
-    const localUser =
-        db.users.find(
-            x =>
-                cleanCPF(x.cpf) === clean
-        );
-
-
-    // ======================================================
-    // SENHA TEMPORÁRIA
-    // ======================================================
-
-    if (
-        maintenanceAllowsApp() && !window.dhndMaintenance?.state.enabled &&
-        localUser &&
-        localUser.tempPass &&
-        localUser.tempPass === passRaw
-    ) {
-
-        if (
-            Date.now() >
-            localUser.tempPassExp
-        ) {
-
-            return toast(
-                "SENHA TEMPORÁRIA EXPIRADA",
-                "error"
-            );
+    function credentialError(error) {
+        const code = error?.code;
+        return ['auth/invalid-credential', 'auth/invalid-login-credentials', 'auth/wrong-password', 'auth/user-not-found'].includes(code)
+            || (code === 'auth/internal-error' && /\bINVALID_LOGIN_CREDENTIALS\b/.test(String(error.message || '')));
+    }
+    function reportAuthError(error) {
+        let message;
+        switch (error?.code) {
+            case 'auth/network-request-failed':
+            case 'auth/timeout':
+                message = 'NÃO FOI POSSÍVEL CONECTAR. VERIFIQUE A INTERNET E TENTE NOVAMENTE.';
+                break;
+            case 'auth/too-many-requests':
+                message = 'MUITAS TENTATIVAS. AGUARDE ALGUNS MINUTOS ANTES DE TENTAR NOVAMENTE.';
+                break;
+            case 'auth/user-disabled':
+                message = 'O ACESSO DESTA CONTA ESTÁ DESATIVADO. FALE COM O SUPORTE.';
+                break;
+            case 'auth/unauthorized-domain':
+            case 'auth/operation-not-allowed':
+            case 'auth/app-not-authorized':
+            case 'auth/invalid-api-key':
+            case 'auth/configuration-not-found':
+                message = 'O SERVIÇO DE LOGIN ESTÁ INDISPONÍVEL. FALE COM O SUPORTE.';
+                break;
+            default:
+                message = credentialError(error) || error?.code === 'auth/email-already-in-use'
+                    ? 'CPF OU SENHA INCORRETOS. CONFIRA OS DADOS OU FALE COM O SUPORTE.'
+                    : 'NÃO FOI POSSÍVEL ENTRAR AGORA. TENTE NOVAMENTE.';
         }
-
-        return executeLogin(
-            localUser,
-            remember
-        );
+        toast(message, 'error');
+        return false;
     }
 
-
-    // ======================================================
-    // SEM FIREBASE AUTH
-    // ======================================================
-
-    if (!auth) {
-
-        if (
-            localUser &&
-            (
-                localUser.pass === passRaw ||
-                localUser.adminNewPass === passRaw
-            )
-        ) {
-
-            return executeLogin(
-                localUser,
-                remember
-            );
-        }
-
-
-        return toast(
-            "CPF OU SENHA INCORRETOS",
-            "error"
-        );
-    }
-
-
-    // ======================================================
-    // PRIMEIRO TENTA LOGIN NORMAL NO FIREBASE
-    // ======================================================
-
+    const legacyAllowed = maintenanceAllowsApp() && !window.dhndMaintenance?.state.enabled;
+    const localUser = legacyAllowed ? db.users.find(user => user && cleanCPF(user.cpf) === cpf) : null;
+    const legacyPasswordMatches = !!localUser && (localUser.pass === password || localUser.adminNewPass === password);
+    const button = document.getElementById('btn-acessar');
+    const previousDisabled = button?.disabled;
+    loginInProgress = true;
+    if (button) button.disabled = true;
     try {
-
-        await auth.signInWithEmailAndPassword(
-            emailFake,
-            authPass
-        );
-
-
-        // IMPORTANTE:
-        // só entra no aplicativo DEPOIS
-        // que o Firebase confirmou a autenticação.
-        return finishLogin(
-            clean,
-            remember
-        );
-
-
-    } catch (loginError) {
-
-        console.warn(
-            "[AUTH] Login Firebase falhou:",
-            loginError.code
-        );
-
-
-        // ==================================================
-        // VERIFICA SE A SENHA DO BANCO DH-ND ESTÁ CORRETA
-        // ==================================================
-
-        const senhaLocalCorreta =
-            localUser &&
-            (
-                localUser.pass === passRaw ||
-                localUser.adminNewPass === passRaw
-            );
-
-
-        if (!senhaLocalCorreta) {
-
-            return toast(
-                "CPF OU SENHA INCORRETOS",
-                "error"
-            );
-        }
-
-
-        // ==================================================
-        // A SENHA LOCAL ESTÁ CERTA.
-        // TENTA CRIAR/RESSINCRONIZAR O FIREBASE AUTH.
-        // ==================================================
-
-        try {
-
-            await auth.createUserWithEmailAndPassword(
-                emailFake,
-                authPass
-            );
-
-
-            console.log(
-                "[AUTH] Conta Firebase recriada com sucesso."
-            );
-
-
-            // Agora existe autenticação Firebase válida.
-            return finishLogin(
-                clean,
-                remember
-            );
-
-
-        } catch (createError) {
-
-            console.error(
-                "[AUTH] Falha ao sincronizar:",
-                createError.code
-            );
-
-
-            // Existe uma conta Firebase com esse CPF,
-            // porém a senha dela não corresponde à senha
-            // atualmente salva no DH-ND.
-            if (
-                createError.code ===
-                'auth/email-already-in-use'
-            ) {
-
-                return toast(
-                    "CONTA FIREBASE DESSINCRONIZADA. EXCLUA SOMENTE O USUÁRIO EM AUTHENTICATION E ENTRE NOVAMENTE.",
-                    "error"
-                );
+        if (localUser?.tempPass === password) {
+            if (Date.now() > localUser.tempPassExp) {
+                toast('SENHA TEMPORÁRIA EXPIRADA.', 'error');
+                return false;
             }
-
-
-            return toast(
-                "ERRO AO SINCRONIZAR LOGIN: " +
-                (
-                    createError.message ||
-                    createError.code
-                ),
-                "error"
-            );
+            await executeLogin(localUser, remember);
+            return true;
         }
+        if (!auth && legacyPasswordMatches) {
+            await executeLogin(localUser, remember);
+            return true;
+        }
+        if (!auth) return reportAuthError({code:'auth/configuration-not-found'});
+        toast('AUTENTICANDO...', 'info');
+        const email = cpf + '@dhpe.com.br';
+        const authPassword = password.padEnd(6, '0');
+        try {
+            await auth.signInWithEmailAndPassword(email, authPassword);
+        } catch (error) {
+            const canMigrate = legacyPasswordMatches && !localUser.uid && credentialError(error)
+                && maintenanceAllowsApp() && !window.dhndMaintenance?.state.enabled;
+            if (!canMigrate) return reportAuthError(error);
+            try {
+                await auth.createUserWithEmailAndPassword(email, authPassword);
+            } catch (migrationError) {
+                return reportAuthError(migrationError);
+            }
+        }
+        return await finishLogin(cpf, remember);
+    } catch (_) {
+        toast('LOGIN VALIDADO, MAS NÃO FOI POSSÍVEL ABRIR O APP. TENTE NOVAMENTE.', 'error');
+        return false;
+    } finally {
+        loginInProgress = false;
+        if (button) button.disabled = previousDisabled;
     }
 };
 
+function selectAuthenticatedProfile(users, cpf, uid) {
+    const candidates = Object.values(users || {}).filter(entry => entry && cleanCPF(entry.cpf) === cpf);
+    const matches = candidates.filter(entry => entry.uid === uid);
+    if (matches.length === 1) return {user:matches[0], code:''};
+    if (matches.length > 1) return {user:null, code:'profile/duplicate'};
+    if (candidates.length === 1 && !candidates[0].uid) return {user:candidates[0], code:''};
+    return {user:null, code:candidates.length ? 'profile/conflict' : 'profile/missing'};
+}
+
+function loginProfileRoot() {
+    return 'dhpe_v25_final_stable_fix';
+}
 async function finishLogin(cpfClean, remember) {
     const account = auth && auth.currentUser;
     const email = cpfClean + '@dhpe.com.br';
-    const season = DB_KEY;
-    const sameSession = () => auth && auth.currentUser && auth.currentUser.uid === account.uid &&
-        String(auth.currentUser.email || '').toLowerCase() === email && DB_KEY === season;
-    if (!account || !account.uid || !sameSession()) {
+    const uid = account && account.uid;
+    const sameSession = () => !!(uid && auth.currentUser && auth.currentUser.uid === uid &&
+        String(auth.currentUser.email || '').toLowerCase() === email);
+    if (!sameSession()) {
         toast('NÃO FOI POSSÍVEL VALIDAR SUA SESSÃO. ENTRE NOVAMENTE.', 'error');
         return false;
     }
-    try {
-        const state = window.dhndMaintenance.state;
-        let user = state.ready && !state.enabled && db.users.find(entry => entry && cleanCPF(entry.cpf) === cpfClean);
-        if (!user) {
-            // The normal listener pauses during maintenance. Validate the authenticated profile separately.
+    const root = loginProfileRoot();
+    const state = window.dhndMaintenance.state;
+    let result = {user:null, code:'profile/missing'};
+    if (state.ready && !state.enabled && DB_KEY === root) {
+        const cached = selectAuthenticatedProfile(db.users, cpfClean, uid);
+        if (cached.user?.uid === uid) result = cached;
+    }
+    if (!result.user) {
+        toast('LOGIN VALIDADO. CARREGANDO CADASTRO...', 'info');
+        try {
             const token = await awaitWithTimeout(account.getIdToken(), 8000, 'profile/timeout', 'Tempo de autenticação esgotado');
             if (!sameSession()) return false;
-            const url = firebaseConfig.databaseURL + '/' + encodeURIComponent(season) + '/users.json?auth=' + encodeURIComponent(token);
-            const users = await awaitWithTimeout(fetch(url, {cache:'no-store'}).then(response => {
-                if (!response.ok) throw new Error('Cadastro indisponível');
+            const url = firebaseConfig.databaseURL + '/' + root + '/users.json?auth=' + encodeURIComponent(token);
+            const users = await awaitWithTimeout(fetch(url, {cache:'no-store', referrerPolicy:'no-referrer'}).then(response => {
+                if (!response.ok) {
+                    const code = response.status === 401 || response.status === 403 ? 'profile/denied' : 'profile/unavailable';
+                    throw Object.assign(new Error('Cadastro indisponível'), {code});
+                }
                 return response.json();
-            }), 12000, 'profile/timeout', 'Tempo de leitura esgotado');
+            }), 16000, 'profile/timeout', 'Tempo de leitura esgotado');
             if (!sameSession()) return false;
-            user = Object.values(users || {}).find(entry => entry && cleanCPF(entry.cpf) === cpfClean);
-        }
-        if (!user || (user.uid && user.uid !== account.uid)) {
-            toast('CADASTRO NÃO ENCONTRADO OU INCOMPATÍVEL COM A CONTA.', 'error');
+            result = selectAuthenticatedProfile(users, cpfClean, uid);
+        } catch (error) {
+            if (!sameSession()) return false;
+            const messages = {
+                'profile/timeout':'O CADASTRO DEMOROU A CARREGAR. TENTE NOVAMENTE. [CAD-TEMPO]',
+                'profile/denied':'LOGIN VALIDADO, MAS O CADASTRO ESTÁ INDISPONÍVEL PARA ESTA CONTA. FALE COM O SUPORTE. [CAD-ACESSO]'
+            };
+            toast(messages[error.code] || 'LOGIN VALIDADO, MAS O CADASTRO NÃO CARREGOU. CONFIRA A CONEXÃO E TENTE NOVAMENTE. [CAD-REDE]', 'error');
             return false;
         }
-        if (!sameSession()) return false;
-        executeLogin(user, remember);
-        return true;
-    } catch (_) {
-        if (sameSession()) toast('NÃO FOI POSSÍVEL CARREGAR O CADASTRO. TENTE NOVAMENTE.', 'error');
+    }
+    if (!result.user) {
+        toast(result.code === 'profile/missing'
+            ? 'LOGIN VALIDADO, MAS O CADASTRO NÃO FOI ENCONTRADO. FALE COM O SUPORTE. [CAD-AUSENTE]'
+            : 'LOGIN VALIDADO, MAS HÁ UMA DIVERGÊNCIA NO CADASTRO. FALE COM O SUPORTE. [CAD-VINCULO]', 'error');
         return false;
     }
+    if (!sameSession()) return false;
+    executeLogin(result.user, remember);
+    return true;
 }
 function executeLogin(user, remember) { loggedUser = user;
 if (window.dhndMaintenance) window.dhndMaintenance.refreshIdentity();
-if(remember) { localStorage.setItem(SESS_KEY, JSON.stringify(user)); sessionStorage.removeItem(SESS_KEY); } else { sessionStorage.setItem(SESS_KEY, JSON.stringify(user)); localStorage.removeItem(SESS_KEY); } toast("BEM-VINDO DE VOLTA!"); initApp(false);
+try {
+    const preferred = remember ? localStorage : sessionStorage;
+    const other = remember ? sessionStorage : localStorage;
+    other.removeItem(SESS_KEY);
+    preferred.setItem(SESS_KEY, JSON.stringify(user));
+} catch (_) {
+    // O login continua válido nesta aba mesmo se o navegador não puder salvar a sessão.
+} toast("BEM-VINDO DE VOLTA!"); initApp(false);
 }
-window.fazerLogout = function() { if(auth) auth.signOut(); localStorage.removeItem(SESS_KEY); sessionStorage.removeItem(SESS_KEY); localStorage.removeItem(LAST_TAB_KEY); localStorage.removeItem(LAST_ADM_KEY); loggedUser = null; window.location.reload(true); };
+window.fazerLogout = async function() {
+    try {
+        if (auth) await auth.signOut();
+    } catch (_) {
+        toast('NÃO FOI POSSÍVEL ENCERRAR A SESSÃO. TENTE NOVAMENTE.', 'error');
+        return;
+    }
+    try { sessionStorage.removeItem(SESS_KEY); } catch (_) {}
+    try {
+        for (const key of [SESS_KEY, LAST_TAB_KEY, LAST_ADM_KEY]) localStorage.removeItem(key);
+    } catch (_) {}
+    loggedUser = null;
+    window.location.reload();
+};
 window.cadastrar = function() {
     if (!maintenanceAllowsApp()) return toast('CADASTROS PAUSADOS DURANTE A MANUTENÇÃO.', 'error'); 
     const nome = document.getElementById('cad-nome').value.toUpperCase(); const cpf = document.getElementById('cad-cpf').value; const tel = document.getElementById('cad-tel').value;
@@ -1769,7 +1729,8 @@ if (btnAdm) {
     btnAdm.style.display =
         usuarioTemAcessoAdm ? 'flex' : 'none';
 } 
-    let savedTab = localStorage.getItem(LAST_TAB_KEY) || 'calendar';
+    let savedTab = 'calendar';
+    try { savedTab = localStorage.getItem(LAST_TAB_KEY) || savedTab; } catch (_) {}
     if(savedTab === 'adm' && (!loggedUser || (!isSuperAdmin(loggedUser) && loggedUser.role !== 'ORGANIZER' && loggedUser.role !== 'ADMIN'))) { savedTab = 'calendar';
     }
     document.getElementById('lbl-season-year').innerText = SYSTEM_YEAR; recalcRanking(); nav(savedTab); 
@@ -1881,7 +1842,8 @@ if (btnAdm) {
 }
 
 
-function nav(t) { if (!maintenanceAllowsApp()) return; currentTab = t; localStorage.setItem(LAST_TAB_KEY, t); document.querySelectorAll('.bar-item').forEach(b => b.classList.remove('active')); if(document.getElementById('btn-'+t)) document.getElementById('btn-'+t).classList.add('active');
+function nav(t) { if (!maintenanceAllowsApp()) return; currentTab = t;
+try { localStorage.setItem(LAST_TAB_KEY, t); } catch (_) {} document.querySelectorAll('.bar-item').forEach(b => b.classList.remove('active')); if(document.getElementById('btn-'+t)) document.getElementById('btn-'+t).classList.add('active');
 document.querySelectorAll('.c-sec').forEach(e => { e.style.display='none'; e.classList.remove('active'); }); const activeSec = document.getElementById('cont-'+t); if(activeSec) { activeSec.style.display='block'; activeSec.classList.add('active');
 } if(t === 'tempos' || t === 'ranking') populatePublicFilters(t); if(t === 'profile') { updateCardLive(); loadProfileData(); } if(t === 'adm') tryOpenAdmin(true);
 else renderContent(t); }

@@ -20,6 +20,7 @@ const DB_KEY = SEASON_CONTEXT.root;
 const SESS_KEY = 'dhpe_sess_v25';
 
 const CLUB_ROOT = 'dhclub';
+const CLUB_PROFILE_ROOT = 'dhpe_v25_final_stable_fix';
 
 
 if (!firebase.apps.length) {
@@ -48,6 +49,8 @@ let clubMaintenancePaused = true;
 let clubMaintenanceInitPromise = null;
 let clubEventsBound = false;
 let clubMaintenanceRunning = false;
+let clubSessionUID = null;
+let stopClubProfileListener = null;
 
 function clubMaintenanceAllowed() {
   return !!(window.dhndMaintenance && window.dhndMaintenance.guard());
@@ -57,6 +60,9 @@ function pauseClubForMaintenance() {
   if (!clubMaintenancePaused) clubMaintenanceEpoch++;
   clubMaintenancePaused = true;
   clubMaintenanceRunning = false;
+  clubSessionUID = null;
+  if (stopClubProfileListener) stopClubProfileListener();
+  stopClubProfileListener = null;
   database.ref(DB_KEY).off('value');
   database.ref(CLUB_ROOT).off('value');
   const app = document.getElementById('club-app');
@@ -2942,25 +2948,38 @@ function organizerCanManageEvent(
 // ==========================================================
 
 function sessionUser() {
-
-  const raw =
-    localStorage.getItem(SESS_KEY) ||
-    sessionStorage.getItem(SESS_KEY);
-
-  if (!raw) {
-    return null;
-  }
-
   try {
-
-    return JSON.parse(raw);
-
+    const raw = localStorage.getItem(SESS_KEY) || sessionStorage.getItem(SESS_KEY);
+    return raw ? JSON.parse(raw) : null;
   } catch {
-
     return null;
   }
 }
 
+function clubAccountMatchesSession(profile, account) {
+  const cpf = cleanCPF(profile?.cpf);
+  return !!account?.uid &&
+    cpf.length === 11 &&
+    String(account.email || '').toLowerCase() === cpf + '@dhpe.com.br' &&
+    (!profile.uid || String(profile.uid) === String(account.uid));
+}
+
+function clubFindSessionProfile(profiles, account, session) {
+  const cpf = cleanCPF(session.cpf);
+  const matches = profiles.filter(profile => cleanCPF(profile?.cpf) === cpf);
+  const bound = matches.filter(profile => profile.uid && clubAccountMatchesSession(profile, account));
+  if (bound.length === 1) return bound[0];
+  if (matches.length === 1 && !matches[0].uid) return matches[0];
+  return null;
+}
+
+function showClubSessionGate() {
+  if (clubMaintenanceRunning) pauseClubForMaintenance();
+  showClubGate(
+    'Confirme sua sessão no DH-ND',
+    'Volte ao DH-ND, entre com seu CPF e senha e depois abra o DH-Club novamente.'
+  );
+}
 
 // ==========================================================
 // MEMBRO DH-CLUB
@@ -25681,6 +25700,7 @@ function withTimeout(
 async function init() {
   if (!clubMaintenanceAllowed()) return;
   const maintenanceEpoch = clubMaintenanceEpoch;
+  const currentMaintenance = () => clubMaintenanceAllowed() && maintenanceEpoch === clubMaintenanceEpoch;
 
   setClubLoading(
     'VERIFICANDO SESSÃO…'
@@ -25778,6 +25798,8 @@ async function init() {
   // 3. TENTA RESTAURAR LOGIN
   // ========================================================
 
+  if (!currentMaintenance()) return;
+
   if (!auth.currentUser) {
 
     const cpfAuth =
@@ -25794,7 +25816,7 @@ async function init() {
 
 
     if (
-      cpfAuth &&
+      cpfAuth.length === 11 &&
       senhaLocal
     ) {
 
@@ -25857,6 +25879,8 @@ async function init() {
   // 4. SE CONTINUA SEM AUTH
   // ========================================================
 
+  if (!currentMaintenance()) return;
+
   if (!auth.currentUser) {
 
     localStorage.removeItem(
@@ -25894,26 +25918,24 @@ async function init() {
   }
 
 
-  console.log(
-    '[DH-CLUB] Firebase autenticado:',
-    auth.currentUser.uid
-  );
-
-
-  const avatar =
-    document.getElementById(
-      'club-avatar-initials'
-    );
-
-
-  if (avatar) {
-
-    avatar.textContent =
-      initials(
-        loggedUser.nome
-      );
+  const account = auth.currentUser;
+  const session = loggedUser;
+  if (!clubAccountMatchesSession(session, account)) {
+    showClubSessionGate();
+    return;
   }
+  const sameAccount = () => auth.currentUser?.uid === account.uid &&
+    clubAccountMatchesSession(session, auth.currentUser);
 
+  function updateClubProfile(users) {
+    const fresh = clubFindSessionProfile(users, account, session);
+    if (!fresh) {
+      showClubSessionGate();
+      return false;
+    }
+    loggedUser = fresh;
+    return true;
+  }
 
   // ========================================================
   // 5. CARREGA DADOS
@@ -25924,41 +25946,27 @@ async function init() {
   );
 
 
-  if (!clubMaintenanceAllowed() || maintenanceEpoch !== clubMaintenanceEpoch) return;
-  const [
-    coreSnap,
-    clubSnap
-  ] =
-    await withTimeout(
+  if (!currentMaintenance()) return;
+  // A temporada organiza os resultados. O cadastro é validado na base atual.
+  const activeProfiles = DB_KEY === CLUB_PROFILE_ROOT
+    ? null
+    : database.ref(CLUB_PROFILE_ROOT + '/users');
+  const [coreSnap, clubSnap, profileSnap] = await withTimeout(
+    Promise.all([
+      database.ref(DB_KEY).once('value'),
+      database.ref(CLUB_ROOT).once('value'),
+      activeProfiles?.once('value')
+    ]),
+    30000,
+    'DATABASE_TIMEOUT'
+  );
 
-      Promise.all([
+  if (!currentMaintenance()) return;
+  if (!sameAccount() || !clubAccountMatchesSession(sessionUser(), auth.currentUser)) {
+    showClubSessionGate();
+    return;
+  }
 
-        database
-          .ref(
-            DB_KEY
-          )
-          .once(
-            'value'
-          ),
-
-        database
-          .ref(
-            CLUB_ROOT
-          )
-          .once(
-            'value'
-          )
-
-      ]),
-
-      30000,
-
-      'DATABASE_TIMEOUT'
-
-    );
-
-
-  if (!clubMaintenanceAllowed() || maintenanceEpoch !== clubMaintenanceEpoch) return;
   const c =
     coreSnap.val() ||
     {};
@@ -25995,24 +26003,10 @@ async function init() {
     );
 
 
-  const fresh =
-    core.users.find(
-      u =>
-        cleanCPF(
-          u.cpf
-        ) ===
-        cleanCPF(
-          loggedUser.cpf
-        )
-    );
+  if (!updateClubProfile(profileSnap ? objValues(profileSnap.val()) : core.users)) return;
 
-
-  if (fresh) {
-
-    loggedUser =
-      fresh;
-  }
-
+  const avatar = document.getElementById('club-avatar-initials');
+  if (avatar) avatar.textContent = initials(loggedUser.nome);
 
   // ========================================================
   // 6. CONFERE ACESSO DH-CLUB
@@ -26037,7 +26031,7 @@ async function init() {
   // 7. ABRE O DH-CLUB
   // ========================================================
 
-  if (!clubMaintenanceAllowed() || maintenanceEpoch !== clubMaintenanceEpoch) return;
+  if (!currentMaintenance()) return;
   setClubLoading(
     'ABRINDO DH-CLUB…'
   );
@@ -26077,6 +26071,8 @@ async function init() {
   }
   const previousGate = document.getElementById('club-gate');
   if (previousGate) previousGate.classList.add('hidden');
+  clubSessionUID = account.uid;
+  clubMaintenanceRunning = true;
   renderHome();
 
 
@@ -26092,7 +26088,7 @@ async function init() {
       'value',
 
       snap => {
-        if (!clubMaintenanceAllowed() || maintenanceEpoch !== clubMaintenanceEpoch) return;
+        if (!currentMaintenance() || !sameAccount()) return;
 
         const c =
           snap.val() ||
@@ -26123,25 +26119,7 @@ async function init() {
         }, SYSTEM_YEAR, DB_KEY);
 
 
-        const fresh =
-          core.users.find(
-            u =>
-              cleanCPF(
-                u.cpf
-              ) ===
-              cleanCPF(
-                loggedUser.cpf
-              )
-          );
-
-
-        if (fresh) {
-
-          loggedUser =
-            fresh;
-        }
-
-
+        if (!activeProfiles && !updateClubProfile(core.users)) return;
         render(
           currentView
         );
@@ -26153,6 +26131,7 @@ async function init() {
           '[DH-CLUB] Erro banco principal:',
           error
         );
+        if (!activeProfiles && currentMaintenance() && sameAccount()) showClubSessionGate();
       }
     );
 
@@ -26169,7 +26148,7 @@ async function init() {
       'value',
 
       snap => {
-        if (!clubMaintenanceAllowed() || maintenanceEpoch !== clubMaintenanceEpoch) return;
+        if (!currentMaintenance() || !sameAccount()) return;
 
         club =
           normalizeClub(
@@ -26191,7 +26170,16 @@ async function init() {
         );
       }
     );
-  clubMaintenanceRunning = true;
+  if (activeProfiles && currentMaintenance()) {
+    const refresh = snap => {
+      if (!currentMaintenance() || !sameAccount()) return;
+      if (updateClubProfile(objValues(snap.val()))) render(currentView);
+    };
+    stopClubProfileListener = () => activeProfiles.off('value', refresh);
+    activeProfiles.on('value', refresh, () => {
+      if (currentMaintenance() && sameAccount()) showClubSessionGate();
+    });
+  }
 }
 
 
@@ -26299,6 +26287,12 @@ window.dhndMaintenance = window.DHNDMaintenance.create({
     localStorage.removeItem(SESS_KEY);
     sessionStorage.removeItem(SESS_KEY);
     Promise.resolve(auth.signOut()).finally(() => { window.location.href = 'index.html'; });
+  }
+});
+auth.onAuthStateChanged(account => {
+  if (clubMaintenanceRunning &&
+      (account?.uid !== clubSessionUID || !clubAccountMatchesSession(loggedUser, account))) {
+    showClubSessionGate();
   }
 });
 if (clubMaintenanceAllowed()) resumeClubAfterMaintenance();
