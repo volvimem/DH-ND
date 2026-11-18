@@ -103,8 +103,8 @@
             const mode = state.allowed ? 'allowed' : (state.loginRequested ? 'login' : (state.ready || errorVisible ? 'blocked' : 'pending'));
             if (doc.documentElement) doc.documentElement.setAttribute('data-dhnd-maintenance', mode);
             const covered = mode === 'pending' || mode === 'blocked';
-            gate.style.display = covered ? 'flex' : 'none';
-            title.textContent = errorVisible ? 'ACESSO INDISPONÍVEL' : (state.enabled ? 'SISTEMA EM MANUTENÇÃO' : 'VERIFICANDO ACESSO');
+            gate.style.display = mode === 'blocked' ? 'flex' : 'none';
+            title.textContent = errorVisible ? 'ACESSO INDISPONÍVEL' : 'SISTEMA EM MANUTENÇÃO';
             message.textContent = state.message;
             loginButton.style.display = state.ready && state.enabled ? '' : 'none';
             logoutButton.style.display = auth.currentUser || capture().cpf ? '' : 'none';
@@ -152,18 +152,19 @@
                 const policy = publicPolicy(raw);
                 publicHint = JSON.stringify(raw);
                 if (!authReady) {publish({enabled:policy.enabled}); return;}
-                if (!sdkConnected) {errorVisible = true; publish({ready:false, enabled:policy.enabled, allowed:false, admin:false, message:UNAVAILABLE}); return;}
                 let admin = false, allowed = !policy.enabled, ownAllowed;
-                if (actor.matches) {
-                    try {admin = await read(ROOT + '/adminAccess', actor, version, true) === true;}
-                    catch (error) {if (policy.enabled || error.code === 'maintenance/stale') throw error;}
-                    if (policy.enabled) {
-                        if (admin) allowed = true;
-                        else {ownAllowed = await read(ROOT + '/allowedCpfs/' + actor.cpf, actor, version); allowed = ownAllowed === true;}
-                    }
+                if (policy.enabled && sdkConnected && actor.matches) {
+                    admin = await read(ROOT + '/adminAccess', actor, version, true) === true;
+                    if (admin) allowed = true;
+                    else {ownAllowed = await read(ROOT + '/allowedCpfs/' + actor.cpf, actor, version); allowed = ownAllowed === true;}
                 }
                 current(actor, version);
-                signal('own', policy.enabled && actor.matches && !admin ? ROOT + '/allowedCpfs/' + actor.cpf : null, ownAllowed);
+                if (policy.enabled && !sdkConnected) {
+                    admin = false;
+                    allowed = false;
+                    ownAllowed = undefined;
+                }
+                signal('own', policy.enabled && sdkConnected && actor.matches && !admin ? ROOT + '/allowedCpfs/' + actor.cpf : null, ownAllowed);
                 signal('admin', admin ? ROOT + '/adminAccess' : null, true);
                 current(actor, version);
                 verifiedIdentity = actor.key;
@@ -178,7 +179,7 @@
             }
         }
         function schedule(invalidate) {
-            if (capture().key !== lastIdentity) invalidate = true;
+            if (state.enabled && capture().key !== lastIdentity) invalidate = true;
             if (invalidate) {epoch++; pending();}
             if (scheduled) return scheduled;
             scheduled = Promise.resolve().then(() => {
@@ -188,7 +189,7 @@
             return scheduled;
         }
         function refreshIdentity() {
-            return schedule(capture().key !== lastIdentity);
+            return schedule(false);
         }
         function beginLogin(callHandler = true) {
             epoch++;
@@ -237,7 +238,7 @@
         }
 
         render();
-        auth.onAuthStateChanged(() => {authReady = true; schedule(true);}, () => {authReady = false; epoch++; errorVisible = true; publish({ready:false, allowed:false, admin:false, message:UNAVAILABLE});});
+        auth.onAuthStateChanged(() => {authReady = true; schedule(false);}, () => {authReady = false; epoch++; errorVisible = true; publish({ready:false, allowed:false, admin:false, message:UNAVAILABLE});});
         const publicRef = database.ref(ROOT + '/public');
         publicRef.on('value', snapshot => {
             const hint = JSON.stringify(snapshot.val());
@@ -245,10 +246,14 @@
             if (hint !== publicHint) {publicHint = hint; schedule(true);}
         }, () => schedule(true));
         database.ref('.info/connected').on('value', snapshot => {
+            const wasConnected = sdkConnected;
             sdkConnected = snapshot.val() === true;
-            if (sdkConnected) schedule(true);
-            else {epoch++; errorVisible = true; publish({ready:false, allowed:false, admin:false, message:UNAVAILABLE});}
-        }, () => {sdkConnected = false; epoch++; errorVisible = true; publish({ready:false, allowed:false, admin:false, message:UNAVAILABLE});});
+            if (sdkConnected) schedule(false);
+            else if (wasConnected && state.enabled) schedule(true);
+        }, () => {
+            sdkConnected = false;
+            if (state.enabled) schedule(true);
+        });
         global.setInterval(() => schedule(false), 20000);
         if (global.addEventListener) {
             global.addEventListener('offline', () => {epoch++; errorVisible = true; publish({ready:false, allowed:false, admin:false, message:UNAVAILABLE});});

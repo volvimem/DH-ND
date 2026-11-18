@@ -169,8 +169,31 @@ async function runSuite(options={}) {
   await test('an offline startup never trusts an OFF cache or even attempts a confirmation request',async()=>{
     const h=await started({online:false,profile:null,remote:{public:{enabled:false,message:''}}},null);assert.equal(h.gate.guard(),false);assert.equal(h.gate.state.ready,false);assert.equal(h.requests.length,0);
   });
-  await test('a false Firebase SDK connection blocks even a verified OFF public policy',async()=>{
-    const h=await started({profile:null,remote:{sdkConnected:false,public:{enabled:false,message:''}}},null);assert.equal(h.gate.guard(),false);assert.equal(h.gate.state.allowed,false);
+  await test('normal startup shows no maintenance dialog and verified OFF does not wait for the SDK connection',async()=>{
+    const h=setup(source,{profile:null,remote:{sdkConnected:false,public:{enabled:false,message:'Livre.'}}});
+    const dialog=h.nodes.get('dhnd-maintenance-gate');
+    assert.equal(dialog.style.display,'none');
+    await flush();
+    assert.equal(dialog.style.display,'none');
+    await h.emitAuth(null);
+    assert.equal(h.gate.guard(),true);
+    assert.equal(dialog.style.display,'none');
+    assert.ok(!h.textWrites.includes('ACESSO INDISPONÍVEL'));
+    const before=h.changes.length;
+    await h.emitSdk('.info/connected',true);
+    assert.equal(h.gate.guard(),true);
+    assert.equal(h.changes.length,before,'Socket recovery must not cover normal entry');
+    await h.emitAuth(firebaseUser());
+    assert.equal(h.gate.guard(),true);
+    assert.equal(h.changes.length,before,'Signing in must not reopen the maintenance screen when off');
+  });
+  await test('active maintenance never admits a tester before the SDK connects',async()=>{
+    const h=await started({remote:{sdkConnected:false,own:true}});
+    assert.equal(h.gate.state.enabled,true);
+    assert.equal(h.gate.guard(),false);
+    assert.equal(h.nodes.get('dhnd-maintenance-gate').style.display,'flex');
+    await h.emitSdk('.info/connected',true);
+    assert.equal(h.gate.guard(),true);
   });
   await test('losing the Firebase SDK connection revokes an existing admission immediately',async()=>{
     const h=await started({remote:{own:true}});assert.equal(h.gate.guard(),true);await h.emitSdk('.info/connected',false);assert.equal(h.gate.guard(),false);assert.equal(h.gate.state.allowed,false);

@@ -1,7 +1,15 @@
 <!DOCTYPE html>
 <html lang="pt-br" data-dhnd-maintenance="pending">
 <head>
-    <style>html[data-dhnd-maintenance="pending"] body > *:not(#dhnd-maintenance-gate),html[data-dhnd-maintenance="blocked"] body > *:not(#dhnd-maintenance-gate){visibility:hidden}html[data-dhnd-maintenance="login"] #screen-app,html[data-dhnd-maintenance="login"] #main-nav-bar,html[data-dhnd-maintenance="login"] #main-app-header{display:none!important}</style>
+    <style>
+        html[data-dhnd-maintenance="blocked"] body > :not(#dhnd-maintenance-gate),
+        html[data-dhnd-maintenance="pending"] body > :not(#main-app-container):not(#dhnd-maintenance-gate) { visibility: hidden; }
+        html[data-dhnd-maintenance="pending"] #screen-login { display: flex; pointer-events: none; }
+        html[data-dhnd-maintenance="pending"] #main-app-container > :not(#screen-login),
+        html[data-dhnd-maintenance="login"] #screen-app,
+        html[data-dhnd-maintenance="login"] #main-nav-bar,
+        html[data-dhnd-maintenance="login"] #main-app-header { display: none !important; }
+    </style>
     <meta charset="UTF-8">
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
@@ -1636,7 +1644,7 @@ refreshListsOnly();
 
 <script src="season-policy.js?v=1"></script>
 <script src="ranking-policy.js?v=1"></script>
-<script src="maintenance.js?v=1"></script>
+<script src="maintenance.js?v=2"></script>
 <script src="maintenance-admin.js?v=1"></script>
 <script src="script.js?v=169"></script>
 
