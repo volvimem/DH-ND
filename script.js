@@ -2267,6 +2267,25 @@ function nonOfficialRegistrationCategories(evt) {
     return [...categories.values()].sort((left, right) => window.DHNDCategories.compareStartOrder(left.name, right.name));
 }
 
+function configuredExtraPrice(evt, name) {
+    const category = window.normalizeCatName(name);
+    const fees = evt.extraVals || {};
+    const value = fees[category] ?? Object.entries(fees)
+        .find(([saved]) => window.normalizeCatName(saved) === category)?.[1];
+    return String(value ?? '').trim();
+}
+
+function officialExtraRegistrationCategories(evt) {
+    const allowed = new Set(['ESTREANTE', 'RÍGIDA', 'ENDURO', 'OPEN', 'E-BIKE', 'PCD']);
+    const generalPrice = String(evt.val ?? '').trim() || '0,00';
+    const names = new Set(window.DHNDCategories.withEnduro(db.config?.categories)
+        .filter(category => category.active)
+        .map(category => registrationCategoryName(category.name))
+        .filter(name => allowed.has(name)));
+    return [...names].sort(window.DHNDCategories.compareStartOrder)
+        .map(name => ({name, price:configuredExtraPrice(evt, name) || generalPrice}));
+}
+
 function escapeRegistrationOption(value) {
     return String(value).replace(/[&<>"']/g, character => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[character]));
 }
@@ -2312,28 +2331,12 @@ window.iniciarInscricao = function(evtId, mode = 'MAIN') {
             return registrationCategoryName(nomeCat);
         });
         
-        if (evt.type === 'NON_OFFICIAL') {
-             nonOfficialRegistrationCategories(evt).forEach(category => {
-                 if(!categoriasJaInscritas.includes(category.name)) {
-                     catsOptionsHtml += `<option value="${escapeRegistrationOption(category.name)}">${escapeRegistrationOption(category.name)} - R$ ${escapeRegistrationOption(category.price)}</option>`;
-                 }
-             });
-        } else {
-             const allowedExtra = ["OPEN", "RÍGIDA", "E-BIKE", "ESTREANTE", "PCD"];
-             const activeExtraCats = db.config.categories.filter(c => c.active && allowedExtra.includes(c.name)); 
-             
-             activeExtraCats.forEach(c => { 
-                 let catNormalized = window.normalizeCatName(c.name); 
-                 let cleanName = catNormalized.replace(" (EXTRA)", "");
-                 
-                 // Só adiciona a opção se NÃO estiver na lista das que ele já se inscreveu
-                 if(!categoriasJaInscritas.includes(cleanName)) {
-                     let precoExtra = (evt.extraVals && evt.extraVals[catNormalized] && evt.extraVals[catNormalized].trim() !== "") ? evt.extraVals[catNormalized] : (evt.val || "0,00"); 
-                     catsOptionsHtml += `<option value="${c.name}">${cleanName} - R$ ${precoExtra}</option>`; 
-                 }
-             });
-        }
-        
+        const categories = evt.type === 'NON_OFFICIAL' ? nonOfficialRegistrationCategories(evt) : officialExtraRegistrationCategories(evt);
+        categories.forEach(category => {
+            if (!categoriasJaInscritas.includes(category.name)) {
+                catsOptionsHtml += `<option value="${escapeRegistrationOption(category.name)}">${escapeRegistrationOption(category.name)} - R$ ${escapeRegistrationOption(category.price)}</option>`;
+            }
+        });
         selectExtra.innerHTML = catsOptionsHtml;
         const categoryHelp = document.getElementById('extra-sub-help');
         const categoryLabel = document.getElementById('extra-sub-label');
@@ -2382,6 +2385,10 @@ const liberacaoUsuario =
     
     let inscExistente = mode === 'MAIN' ? minhasInscricoes.find(i => !i.extraCat) : minhasInscricoes.find(i => window.normalizeCatName(i.extraCat) === window.normalizeCatName(mode)); 
     if (inscExistente) { abrirModalPagamento(evt, inscExistente); return; }
+    if (mode !== 'MAIN' && evt.type !== 'NON_OFFICIAL'
+        && !officialExtraRegistrationCategories(evt).some(category => category.name === registrationCategoryName(mode))) {
+        return toast('CATEGORIA NÃO DISPONÍVEL NESTE EVENTO', 'error');
+    }
     currentInscricaoPendente = { id: evtId, status: 'PENDENTE', date: new Date().toISOString(), extraCat: mode === 'MAIN' ? null : (evt.type === 'NON_OFFICIAL' ? window.normalizeCatName(mode) : mode) }; 
     abrirModalPagamento(evt, currentInscricaoPendente);
 };
@@ -2417,7 +2424,8 @@ window.confirmarInscricaoExtra = function() {
     const catEscolhida = document.getElementById('extra-sub-cat').value;
     if (!catEscolhida) return toast('SELECIONE A CATEGORIA!', 'error');
     const name = registrationCategoryName(catEscolhida);
-    if (evt.type === 'NON_OFFICIAL' && !nonOfficialRegistrationCategories(evt).some(category => category.name === name)) {
+    const categories = evt.type === 'NON_OFFICIAL' ? nonOfficialRegistrationCategories(evt) : officialExtraRegistrationCategories(evt);
+    if (!categories.some(category => category.name === name)) {
         return toast('CATEGORIA NÃO DISPONÍVEL NESTE EVENTO', 'error');
     }
     const subscriptions = (loggedUser.inscricoes || []).filter(item => String(item.id) === String(tempEvtIdExtra));
@@ -2431,23 +2439,17 @@ window.confirmarInscricaoExtra = function() {
 };
 window.abrirModalPagamento = function(evt, inscPendente) { 
     currentPayId = {id: parseInt(evt.id), name: evt.t}; 
-    let finalPrice = evt.val ||
-    "0,00";
+    let finalPrice = String(evt.val ?? '').trim() || '0,00';
     
     if (evt.type === 'NON_OFFICIAL') {
         const catNormalized = inscPendente && inscPendente.extraCat ?
         window.normalizeCatName(inscPendente.extraCat) : window.normalizeCatName(loggedUser.cat);
         const chosenCategory = nonOfficialRegistrationCategories(evt).find(category => category.name === registrationCategoryName(catNormalized));
         if (chosenCategory) finalPrice = chosenCategory.price;
-    } else {
-        if (inscPendente && inscPendente.extraCat && evt.extraVals) { 
-            const catNormalized = window.normalizeCatName(inscPendente.extraCat);
-            if (evt.extraVals[catNormalized] && evt.extraVals[catNormalized].trim() !== "") { 
-                finalPrice = evt.extraVals[catNormalized];
-            } 
-        }
+    } else if (inscPendente?.extraCat) {
+        finalPrice = configuredExtraPrice(evt, inscPendente.extraCat) || finalPrice;
     }
-    
+
     const valorEl = document.getElementById('pix-valor-display');
     const pixEl = document.getElementById('pix-copy'); 
     if(valorEl) valorEl.innerText = "R$ " + finalPrice; 
@@ -6094,7 +6096,14 @@ window.addEvent = function() {
         Object.keys(extraVals).forEach(k => { if(!extraVals[k]) delete extraVals[k]; });
     } else {
         geralVal = getVal('adm-evt-v');
-        extraVals = { 'ESTREANTE (EXTRA)': getVal('adm-evt-v-estreante'), 'OPEN (EXTRA)': getVal('adm-evt-v-open'), 'RÍGIDA (EXTRA)': getVal('adm-evt-v-rigida'), 'E-BIKE (EXTRA)': getVal('adm-evt-v-ebike'), 'PCD (EXTRA)': getVal('adm-evt-v-pcd') };
+        extraVals = {
+            'ESTREANTE (EXTRA)': getVal('adm-evt-v-estreante'),
+            'RÍGIDA (EXTRA)': getVal('adm-evt-v-rigida'),
+            'ENDURO': getVal('adm-evt-v-enduro'),
+            'OPEN (EXTRA)': getVal('adm-evt-v-open'),
+            'E-BIKE (EXTRA)': getVal('adm-evt-v-ebike'),
+            'PCD (EXTRA)': getVal('adm-evt-v-pcd')
+        };
     }
     const pointsEnabled = evtType !== 'NON_OFFICIAL' || getVal('adm-evt-points-enabled') === 'true';
     hasQualify = document.getElementById('adm-evt-has-qualify').checked;
@@ -6265,10 +6274,9 @@ window.editEvent = function(id) {
         setAndSave('adm-evt-type', type);
         const additionalSeals = window.DHNDScoring.eventSeals(e).filter(seal => seal !== type);
         eventSealFields().forEach((field, index) => setAndSave(field.id, additionalSeals[index] || ''));
-        const enduroFee = e.type === 'NON_OFFICIAL'
-            ? Object.entries(e.extraVals || {}).filter(([name]) => registrationCategoryName(name) === 'ENDURO').at(-1)?.[1]
-            : undefined;
-        setAndSave('adm-evt-v-enduro-non', enduroFee == null ? '' : String(enduroFee));
+        const enduroFee = configuredExtraPrice(e, 'ENDURO');
+        setAndSave('adm-evt-v-enduro-non', type === 'NON_OFFICIAL' ? enduroFee : '');
+        setAndSave('adm-evt-v-enduro', type !== 'NON_OFFICIAL' ? enduroFee : '');
         if (e.type === 'NON_OFFICIAL') {
             if(e.extraVals) {
                 setAndSave('adm-evt-v-elite', e.extraVals['ELITE'] || '');

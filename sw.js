@@ -114,7 +114,7 @@ self.addEventListener("notificationclick", (event) => {
 // ==========================================================
 // PARTE 2: PWA E CACHE
 // ==========================================================
-const CACHE_NAME = 'dhnd-enduro-start-order-20261119';
+const CACHE_NAME = 'dhnd-ebike-extra-enduro-20261119';
 const APP_SCOPE = new URL(self.registration.scope);
 const STATIC_CACHE_PREFIX = `dhnd-official-static:${APP_SCOPE.href}:`;
 const STATIC_CACHE = STATIC_CACHE_PREFIX + CACHE_NAME;

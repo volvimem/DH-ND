@@ -147,10 +147,10 @@ function runSuite(options={}) {
     assert.deepEqual(rowValues(book.Sheets.CONFIG),configRows(eventId,'OFICIAL'));
     validateAppsScript(appsScript,book,eventId,'OFICIAL');
   });
-  test('start workbook orders RÍGIDA, ENDURO and OPEN as consecutive categories',()=>{
-    const {book}=generate(source,'qualify',undefined,undefined,['OPEN','ENDURO','RÍGIDA']).files[0];
+  test('start workbook orders RÍGIDA, ENDURO, OPEN and E-BIKE consecutively',()=>{
+    const {book}=generate(source,'qualify',undefined,undefined,['OPEN','E-BIKE','ENDURO','RÍGIDA','FEMININO ELITE']).files[0];
     const categories=rowValues(book.Sheets[book.SheetNames[0]]).slice(1).filter(row=>row[2]).map(row=>row[2]);
-    assert.deepEqual(categories.slice(0,3),['RÍGIDA','ENDURO','OPEN']);
+    assert.deepEqual(categories.slice(0,5),['RÍGIDA','ENDURO','OPEN','E-BIKE','FEMININO ELITE']);
   });
   test('no selected event never downloads a workbook',()=>{
     const result=generate(source,'1st',undefined,'');assert.equal(result.files.length,0);assert.equal(result.messages.at(-1)[1],'error');

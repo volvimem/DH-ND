@@ -3,10 +3,10 @@
   'use strict';
   const startOrder = [
     'ESTREANTE', 'ESTREANTE (EXTRA)', 'RIGIDA', 'RÍGIDA', 'RÍGIDA (EXTRA)', 'ENDURO',
-    'OPEN', 'OPEN (EXTRA)', 'ELITE FEMININA', 'FEMININO ELITE', 'FEMININO',
+    'OPEN', 'OPEN (EXTRA)', 'E-BIKE', 'E-BIKE (EXTRA)', 'ELITE FEMININA', 'FEMININO ELITE', 'FEMININO',
     'INFANTO-JUVENIL', 'JUVENIL', 'PCD', 'PCD (EXTRA)', 'MASTER D',
     'MASTER C2', 'MASTER C1', 'MASTER C', 'MASTER B2', 'MASTER B1', 'MASTER B',
-    'MASTER A2', 'MASTER A1', 'MASTER A', 'E-BIKE', 'E-BIKE (EXTRA)', 'JUNIOR', 'SUB-30', 'ELITE'
+    'MASTER A2', 'MASTER A1', 'MASTER A', 'JUNIOR', 'SUB-30', 'ELITE'
   ];
   const categoryLabel = value => String(value ?? '').trim().toUpperCase().replace(/\s+/g, ' ');
   const baseCategory = value => categoryLabel(value).replace(/\s*\((?:EXTRA|OFICIAL)\)$/, '');
