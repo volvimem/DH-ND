@@ -343,7 +343,7 @@
         retry.hidden = true;
         const resultCell = cell('Resultado', output);
         resultCell.append(note, retry);
-        const row = {key, tr, start, finish, output, note, retry, query:simplify([athlete.num, athlete.name, athlete.cat].join(' '))};
+        const row = {key, athlete, tr, start, finish, output, note, retry, query:simplify([athlete.num, athlete.name, athlete.cat].join(' '))};
         row.category = categoryKey(athlete.cat);
         const draft = context.drafts.get(key);
         row.startTime = restoreClock(draft?.start, 'start');
@@ -398,6 +398,8 @@
             row.tr.hidden = !row.startTime && (!row.query.includes(query) || (category.value && row.category !== category.value));
             if (!row.startTime) waiting.push(row);
         }
+        waiting.sort(({athlete:a}, {athlete:b}) => window.DHNDCategories.compareStartOrder(a.cat, b.cat) ||
+            comparator.compare(a.num || '\uffff', b.num || '\uffff') || comparator.compare(a.name, b.name));
         for (const [container, list] of [[runningRows, inProgress], [rows, waiting]]) {
             list.forEach((row, index) => {
                 if (container.children[index] !== row.tr) container.insertBefore(row.tr, container.children[index] || null);
@@ -424,7 +426,7 @@
         const selected = category.value;
         context.categories = categories;
         category.replaceChildren();
-        for (const [key, label] of [['', 'Todas as categorias'], ...[...categories].sort((a, b) => comparator.compare(a[1], b[1]))]) {
+        for (const [key, label] of [['', 'Todas as categorias'], ...[...categories].sort((a, b) => window.DHNDCategories.compareStartOrder(a[1], b[1]))]) {
             const option = document.createElement('option');
             option.value = key;
             option.textContent = label;
@@ -453,10 +455,8 @@
                 context.rows.delete(key);
             }
         }
-        const ordered = [...athletes].sort((a, b) =>
-            comparator.compare(a[1].num || '\uffff', b[1].num || '\uffff') || comparator.compare(a[1].name, b[1].name));
         const resultFor = policy.indexResults(db.tempos);
-        for (const [key, athlete] of ordered) {
+        for (const [key, athlete] of athletes) {
             let row = context.rows.get(key);
             const result = resultFor(athlete) || context.confirmed.get(key);
             if (result) {

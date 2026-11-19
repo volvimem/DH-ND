@@ -3158,7 +3158,8 @@ function normalizeCat(c) {
       'RIGIDA',
       'RÍGIDA'
     )
-    .trim();
+    .trim()
+    .replace(/^ENDURO\s*\((?:EXTRA|OFICIAL)\)$/, 'ENDURO');
 }
 
 

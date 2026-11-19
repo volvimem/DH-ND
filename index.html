@@ -224,8 +224,8 @@
                 </div>
                 <div class="filter-row" style="margin-top:5px; display:grid; grid-template-columns: 1fr 1fr; gap:5px;">
                     <select id="filter-region-tempos" aria-label="Classificação ou estado do atleta" onchange="this.dataset.preferredRegion = this.value; renderContent('tempos')" style="font-size:11px; padding:8px; background:#fff3e0; border-color:#ffa000; color:#e65100; font-weight:bold;">
-                        <option value="PE">PERNAMBUCO (FPC)</option>
                         <option value="NORDESTE">RANKING NORDESTE (GERAL)</option>
+                        <option value="PE">PERNAMBUCO (FPC)</option>
                         <optgroup id="filter-states-tempos" label="ESTADOS DOS ATLETAS" hidden></optgroup>
                     </select>
                     <select id="filter-evt-tempos" onchange="renderContent('tempos')" style="font-size:11px; padding:8px;"><option value="ALL">ETAPAS</option></select>
@@ -249,8 +249,8 @@
                 </div>
                 <div class="filter-row" style="margin-top:5px; display:flex; flex-direction:column; gap:5px;">
                     <select id="filter-region-ranking" aria-label="Classificação ou estado do atleta" onchange="this.dataset.preferredRegion = this.value; renderContent('ranking')" style="padding:10px; font-size:12px; font-weight:900; background:#fff3e0; border:2px solid #ffa000; color:#e65100; border-radius:6px;">
-                        <option value="PE">🏆 PERNAMBUCO (FPC)</option>
                         <option value="NORDESTE">🌎 RANKING NORDESTE</option>
+                        <option value="PE">🏆 PERNAMBUCO (FPC)</option>
                         <optgroup id="filter-states-ranking" label="ESTADOS DOS ATLETAS" hidden></optgroup>
                     </select>
                     <div style="display:flex; gap:5px;">
@@ -499,6 +499,7 @@
                                 <input id="adm-evt-v-masterb" placeholder="MASTER B (R$)" type="tel" class="input-field" style="padding:6px; font-size:10px;">
                                 <input id="adm-evt-v-masterc" placeholder="MASTER C (R$)" type="tel" class="input-field" style="padding:6px; font-size:10px;">
                                 <input id="adm-evt-v-rigida-non" placeholder="RÍGIDA (R$)" type="tel" class="input-field" style="padding:6px; font-size:10px;">
+                                <input id="adm-evt-v-enduro-non" placeholder="ENDURO (R$)" aria-label="Valor da inscrição em Enduro" type="tel" class="input-field" style="padding:6px; font-size:10px;">
                                 
                                 <div style="grid-column: span 2; display: flex; gap: 5px; margin-top: 5px; border-top: 1px dashed #fde047; padding-top: 5px;">
                                     <input id="adm-evt-n-extra1" placeholder="NOME EXTRA 1" class="uppercase-input input-field" style="padding:6px; font-size:10px;">
@@ -1206,7 +1207,7 @@
     let activeDbKey = ""; let activeEvtId = "";
     let slots = [ { id: 0, rider: null, isRunning: false, startTimeMs: null, clockStartStr: null, animFrame: null }, { id: 1, rider: null, isRunning: false, startTimeMs: null, clockStartStr: null, animFrame: null } ];
     
-    window.normalizeCatName = function(catName) { if(!catName) return "GERAL"; let c = catName.toUpperCase().trim(); if(c === "OPEN") return "OPEN (EXTRA)"; if(c === "ESTREANTE") return "ESTREANTE (EXTRA)"; if(c === "RÍGIDA" || c === "RIGIDA") return "RÍGIDA (EXTRA)"; if(c === "E-BIKE") return "E-BIKE (EXTRA)"; if(c === "PCD") return "PCD (EXTRA)"; return c; };
+    window.normalizeCatName = function(catName) { if(!catName) return "GERAL"; let c = catName.toUpperCase().trim(); if(c === "OPEN") return "OPEN (EXTRA)"; if(c === "ESTREANTE") return "ESTREANTE (EXTRA)"; if(c === "RÍGIDA" || c === "RIGIDA") return "RÍGIDA (EXTRA)"; if (/^ENDURO(?:\s*\((?:EXTRA|OFICIAL)\))?$/.test(c)) return "ENDURO"; if(c === "E-BIKE") return "E-BIKE (EXTRA)"; if(c === "PCD") return "PCD (EXTRA)"; return c; };
     function timeToMs(timeStr) { if(!timeStr || timeStr === "--:--.---") return null; if(timeStr === "DNF") return Infinity; let parts = timeStr.split(':'); if(parts.length < 2) return null; let m = parseInt(parts[0], 10); let secParts = parts[1].split('.'); let s = parseInt(secParts[0], 10); let msString = secParts.length > 1 ? secParts[1] : "000"; let ms = Math.round(parseFloat("0." + msString) * 1000); return (m * 60000) + (s * 1000) + ms; }
     function msToTime(ms) { if (ms === null || isNaN(ms)) return null; if (ms === Infinity) return "DNF"; let m = Math.floor(ms / 60000).toString().padStart(2, '0'); let s = Math.floor((ms % 60000) / 1000).toString().padStart(2, '0'); let mls = Math.floor(ms % 1000).toString().padStart(3, '0'); return `${m}:${s}.${mls}`; }
 
@@ -1723,12 +1724,12 @@ refreshListsOnly();
 <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-messaging-compat.js"></script>
 
 <script src="season-policy.js?v=1"></script>
-<script src="ranking-policy.js?v=2"></script>
+<script src="ranking-policy.js?v=3"></script>
 <script src="maintenance.js?v=5"></script>
 <script src="maintenance-admin.js?v=1"></script>
 <script src="roster-policy.js?v=1"></script>
-<script src="script.js?v=176"></script>
-<script src="direct-timing.js?v=2"></script>
+<script src="script.js?v=177"></script>
+<script src="direct-timing.js?v=3"></script>
 
 </body>
 </html>

@@ -27,7 +27,7 @@ const DEFAULT_CATS = [
     {name: "MASTER A2", active: true}, {name: "MASTER B1", active: true}, {name: "MASTER B2", active: true},
     {name: "MASTER C1", active: true}, {name: "MASTER C2", active: true}, {name: "MASTER D", active: true},
     {name: "FEMININO ELITE", active: true}, {name: "FEMININO MASTER", active: true},
-    {name: "OPEN", active: true}, {name: "RÍGIDA", active: true}, {name: "ESTREANTE", active: true},
+    {name: "OPEN", active: true}, {name: "RÍGIDA", active: true}, {name: "ENDURO", active: true}, {name: "ESTREANTE", active: true},
     {name: "E-BIKE", active: true}, {name: "PCD", active: true}
 ];
 const DEFAULT_DB = { users: [], events: [], tempos: [], ranking: [], notifications: [], auditLog: [], x1_duels: [], config: { phone: '', rerunPass: 'admin123', allowAllIDs: false, categories: DEFAULT_CATS } };
@@ -443,7 +443,7 @@ u.city : (fallbackCity || ""); const uf = (u && u.uf) ? u.uf : "PE"; return `${c
 window.getCatClass = function(catName) { if(catName && catName.includes("EXTRA")) return "badge-cat badge-cat-extra"; return "badge-cat"; };
 window.normalizeCatName = function(catName) { if(!catName) return "GERAL";
 let c = catName.toUpperCase().trim(); if(c === "OPEN") return "OPEN (EXTRA)"; if(c === "ESTREANTE") return "ESTREANTE (EXTRA)";
-if(c === "RÍGIDA" || c === "RIGIDA") return "RÍGIDA (EXTRA)"; if(c === "E-BIKE") return "E-BIKE (EXTRA)";
+if(c === "RÍGIDA" || c === "RIGIDA") return "RÍGIDA (EXTRA)"; if (/^ENDURO(?:\s*\((?:EXTRA|OFICIAL)\))?$/.test(c)) return "ENDURO"; if(c === "E-BIKE") return "E-BIKE (EXTRA)";
 if(c === "PCD") return "PCD (EXTRA)"; return c; };
 
 window.isSuperAdmin = function(u) {
@@ -586,6 +586,7 @@ try {
     const localData = localStorage.getItem(DB_KEY);
     if(localData) { 
         db = JSON.parse(localData); 
+        if (db.config) db.config.categories = window.DHNDCategories.withEnduro(db.config.categories || DEFAULT_CATS);
         if(db.users && !Array.isArray(db.users)) db.users = Object.values(db.users);
         if(db.events && !Array.isArray(db.events)) db.events = Object.values(db.events);
         if(db.tempos && !Array.isArray(db.tempos)) db.tempos = Object.values(db.tempos);
@@ -757,7 +758,7 @@ db.events.forEach(e => {
     }
 });
     if(!db.config) db.config = { phone: '', rerunPass: 'admin123', allowAllIDs: false, categories: DEFAULT_CATS };
-    if(!db.config.categories) db.config.categories = DEFAULT_CATS;
+    db.config.categories = window.DHNDCategories.withEnduro(db.config.categories || DEFAULT_CATS);
     if(!db.config.rerunPass) db.config.rerunPass = 'admin123';
     ensureAdminExists();
 }
@@ -2252,7 +2253,7 @@ function nonOfficialRegistrationCategories(evt) {
     if (!evt || evt.type !== 'NON_OFFICIAL') return [];
     const categories = new Map();
     const generalPrice = evt.val != null && String(evt.val).trim() !== '' ? String(evt.val) : '0,00';
-    for (const category of db.config?.categories || []) {
+    for (const category of window.DHNDCategories.withEnduro(db.config?.categories)) {
         if (!category || category.active !== true || !String(category.name || '').trim()) continue;
         const name = registrationCategoryName(category.name);
         categories.set(name, {name, price: generalPrice});
@@ -2263,7 +2264,7 @@ function nonOfficialRegistrationCategories(evt) {
         const price = rawPrice != null && String(rawPrice).trim() !== '' ? String(rawPrice) : generalPrice;
         categories.set(name, {name, price});
     }
-    return [...categories.values()];
+    return [...categories.values()].sort((left, right) => window.DHNDCategories.compareStartOrder(left.name, right.name));
 }
 
 function escapeRegistrationOption(value) {
@@ -2555,21 +2556,6 @@ window.verOrdemLargada = function() {
 
     const cpfLogado = cleanCPF(loggedUser.cpf);
     const agora = new Date();
-
-    const ordemCategorias = [
-        "ESTREANTE", "ESTREANTE (EXTRA)",
-        "RIGIDA", "RÍGIDA", "RÍGIDA (EXTRA)",
-        "OPEN", "OPEN (EXTRA)",
-        "ELITE FEMININA", "FEMININO ELITE", "FEMININO",
-        "INFANTO-JUVENIL", "JUVENIL",
-        "PCD", "PCD (EXTRA)",
-        "MASTER D",
-        "MASTER C2", "MASTER C1", "MASTER C",
-        "MASTER B2", "MASTER B1", "MASTER B",
-        "MASTER A2", "MASTER A1", "MASTER A",
-        "E-BIKE", "E-BIKE (EXTRA)",
-        "JUNIOR", "SUB-30", "ELITE"
-    ];
 
     // ======================================================
     // SOMENTE PAGO/CONFIRMADO OU ISENTO PODE VISUALIZAR
@@ -2888,32 +2874,7 @@ window.verOrdemLargada = function() {
         ];
 
 
-        categoriasPresentes.sort((a, b) => {
-
-            let ia =
-                ordemCategorias.indexOf(a);
-
-            let ib =
-                ordemCategorias.indexOf(b);
-
-
-            if (ia === -1) {
-                ia = 999;
-            }
-
-            if (ib === -1) {
-                ib = 999;
-            }
-
-
-            if (ia !== ib) {
-                return ia - ib;
-            }
-
-
-            return a.localeCompare(b);
-
-        });
+        categoriasPresentes.sort(comparePublicCategories);
 
 
         // ==================================================
@@ -3946,6 +3907,8 @@ window.populatePublicFilters = function(tab) {
             const evtObj = db.events.find(e => String(e.id) === String(currentEvtId));
             if (evtObj && evtObj.type === 'NON_OFFICIAL' && evtObj.extraVals) {
                 catsToShow = Object.keys(evtObj.extraVals).filter(k => evtObj.extraVals[k] && String(evtObj.extraVals[k]).trim() !== "");
+                if (db.config?.categories?.some(category => category.name === 'ENDURO' && category.active)
+                    && !catsToShow.some(name => window.normalizeCatName(name) === 'ENDURO')) catsToShow.push('ENDURO');
             }
         }
         
@@ -3953,23 +3916,7 @@ window.populatePublicFilters = function(tab) {
             catsToShow = db.config.categories.filter(c => c.active).map(c => c.name);
         }
         
-        const ordemDesejada = [
-            "ESTREANTE", "ESTREANTE (EXTRA)", "RIGIDA", "RÍGIDA", "RÍGIDA (EXTRA)",
-            "OPEN", "OPEN (EXTRA)", "ELITE FEMININA", "FEMININO ELITE", "FEMININO",
-            "INFANTO-JUVENIL", "JUVENIL", "PCD", "PCD (EXTRA)", "MASTER D",
-            "MASTER C2", "MASTER C1", "MASTER C", "MASTER B2", "MASTER B1", "MASTER B",
-            "MASTER A2", "MASTER A1", "MASTER A", "E-BIKE", "E-BIKE (EXTRA)",
-            "JUNIOR", "SUB-30", "ELITE"
-        ];
-
-        catsToShow.sort((a, b) => {
-            let indexA = ordemDesejada.indexOf(a.toUpperCase());
-            let indexB = ordemDesejada.indexOf(b.toUpperCase());
-            if (indexA === -1) indexA = 999; 
-            if (indexB === -1) indexB = 999;
-            if (indexA !== indexB) return indexA - indexB;
-            return a.localeCompare(b);
-        });
+        catsToShow.sort(comparePublicCategories);
         
         catsToShow.forEach(c => { catHtml += `<option value="${c}">${c}</option>`; });
         selCat.innerHTML = catHtml;
@@ -3979,6 +3926,10 @@ window.populatePublicFilters = function(tab) {
     }
     return athletes;
 };
+
+function comparePublicCategories(left, right) {
+    return window.DHNDCategories.compareStartOrder(left, right);
+}
 
 const BRAZILIAN_STATES = {
     AC:'ACRE', AL:'ALAGOAS', AP:'AMAPÁ', AM:'AMAZONAS', BA:'BAHIA', CE:'CEARÁ', DF:'DISTRITO FEDERAL',
@@ -4443,83 +4394,11 @@ if (fEvt === 'YEAR_BEST') {
     });
 
 
-    const ordemDesejadaTemposAno = [
-
-        "ESTREANTE",
-        "ESTREANTE (EXTRA)",
-
-        "RIGIDA",
-        "RÍGIDA",
-        "RÍGIDA (EXTRA)",
-
-        "OPEN",
-        "OPEN (EXTRA)",
-
-        "ELITE FEMININA",
-        "FEMININO ELITE",
-        "FEMININO",
-
-        "INFANTO-JUVENIL",
-        "JUVENIL",
-
-        "PCD",
-        "PCD (EXTRA)",
-
-        "MASTER D",
-
-        "MASTER C2",
-        "MASTER C1",
-        "MASTER C",
-
-        "MASTER B2",
-        "MASTER B1",
-        "MASTER B",
-
-        "MASTER A2",
-        "MASTER A1",
-        "MASTER A",
-
-        "E-BIKE",
-        "E-BIKE (EXTRA)",
-
-        "JUNIOR",
-        "SUB-30",
-        "ELITE"
-
-    ];
-
-
     // Ordenação do resultado.
     melhoresAno.sort((a, b) => {
 
 
-        if (
-            fCat === 'ALL_SEP' &&
-            a.cat !== b.cat
-        ) {
-
-            let ia =
-                ordemDesejadaTemposAno.indexOf(
-                    a.cat.toUpperCase().trim()
-                );
-
-            let ib =
-                ordemDesejadaTemposAno.indexOf(
-                    b.cat.toUpperCase().trim()
-                );
-
-
-            if (ia === -1) ia = 999;
-            if (ib === -1) ib = 999;
-
-
-            if (ia !== ib) {
-                return ia - ib;
-            }
-
-
-            return a.cat.localeCompare(b.cat);
-        }
+        if (fCat === 'ALL_SEP' && a.cat !== b.cat) return comparePublicCategories(a.cat, b.cat);
 
 
         // Quem completou todas as etapas fica acima.
@@ -5158,15 +5037,6 @@ if (fEvt === 'YEAR_BEST') {
              });
              let sortedList = Object.values(grouped);
              
-             const ordemDesejadaTempos = [
-                 "ESTREANTE", "ESTREANTE (EXTRA)", "RIGIDA", "RÍGIDA", "RÍGIDA (EXTRA)",
-                 "OPEN", "OPEN (EXTRA)", "ELITE FEMININA", "FEMININO ELITE", "FEMININO",
-                 "INFANTO-JUVENIL", "JUVENIL", "PCD", "PCD (EXTRA)", "MASTER D",
-                 "MASTER C2", "MASTER C1", "MASTER C", "MASTER B2", "MASTER B1", "MASTER B",
-                 "MASTER A2", "MASTER A1", "MASTER A", "E-BIKE", "E-BIKE (EXTRA)",
-                 "JUNIOR", "SUB-30", "ELITE"
-             ];
-
              const noTime = '--:--.---';
              const timeFor = item => fType === 'qualify' ? item.q : (fType === '1st' ? item.o : (fType === '2nd' ? item.s :
                  (item.o !== noTime ? item.o : (item.q !== noTime ? item.q : item.s))));
@@ -5175,12 +5045,7 @@ if (fEvt === 'YEAR_BEST') {
              sortedList.sort((a, b) => {
                  const stageOrder = (stages.get(String(a.evtId))?.index ?? 0) - (stages.get(String(b.evtId))?.index ?? 0);
                  if (stageOrder) return stageOrder;
-                 if (fCat === 'ALL_SEP' && a.cat !== b.cat) {
-                     const orderA = ordemDesejadaTempos.indexOf(a.cat.toUpperCase().trim());
-                     const orderB = ordemDesejadaTempos.indexOf(b.cat.toUpperCase().trim());
-                     const categoryOrder = (orderA < 0 ? 999 : orderA) - (orderB < 0 ? 999 : orderB);
-                     return categoryOrder || a.cat.localeCompare(b.cat);
-                 }
+                 if (fCat === 'ALL_SEP' && a.cat !== b.cat) return comparePublicCategories(a.cat, b.cat);
                  return timeFor(a).localeCompare(timeFor(b));
              });
 
@@ -5370,27 +5235,8 @@ if (fEvt === 'YEAR_BEST') {
              // ==========================================================
              // LÓGICA ORIGINAL DO RANKING POR ATLETAS E PÓDIO MATEMÁTICO
              // ==========================================================
-             const ordemDesejada = [
-                 "ESTREANTE", "ESTREANTE (EXTRA)", "RIGIDA", "RÍGIDA", "RÍGIDA (EXTRA)",
-                 "OPEN", "OPEN (EXTRA)", "ELITE FEMININA", "FEMININO ELITE", "FEMININO",
-                 "INFANTO-JUVENIL", "JUVENIL", "PCD", "PCD (EXTRA)", "MASTER D",
-                 "MASTER C2", "MASTER C1", "MASTER C", "MASTER B2", "MASTER B1", "MASTER B",
-                 "MASTER A2", "MASTER A1", "MASTER A", "E-BIKE", "E-BIKE (EXTRA)",
-                 "JUNIOR", "SUB-30", "ELITE"
-             ];
-
              filteredList.sort((a,b) => {
-                 if (fCat === 'ALL_SEP') {
-                     // Ordena por categoria primeiro respeitando a Ordem de Largada
-                     if (a.cat !== b.cat) {
-                         let indexA = ordemDesejada.indexOf(a.cat.toUpperCase().trim());
-                         let indexB = ordemDesejada.indexOf(b.cat.toUpperCase().trim());
-                         if (indexA === -1) indexA = 999;
-                         if (indexB === -1) indexB = 999;
-                         if (indexA !== indexB) return indexA - indexB;
-                         return a.cat.localeCompare(b.cat);
-                     }
-                 }
+                 if (fCat === 'ALL_SEP' && a.cat !== b.cat) return comparePublicCategories(a.cat, b.cat);
                  // Em seguida, ordena por pontos (do maior para o menor) dentro da categoria
                  return b.totalPts - a.totalPts;
              });
@@ -5523,7 +5369,7 @@ window.openAdmSection = function(sec) {
     if(sec === 'cats') renderAdmCategories();
     if(sec === 'users-edit') { 
         const catSel = document.getElementById('adm-user-filter-cat');
-        const activeCats = db.config.categories.filter(c => c.active).map(c => c.name).sort(); 
+        const activeCats = db.config.categories.filter(c => c.active).map(c => c.name).sort(comparePublicCategories); 
         let catHtml = '<option value="ALL">TODAS CATEGORIAS</option>';
         activeCats.forEach(c => { catHtml += `<option value="${c}">${c}</option>`; }); catSel.innerHTML = catHtml; 
         const savedCat = localStorage.getItem('ui_adm-user-filter-cat');
@@ -5754,7 +5600,7 @@ window.openEditUserModal = function(cpf){
         document.getElementById('super-edit-old-cpf').value = u.cpf;
         document.getElementById('super-edit-name').value = u.nome; document.getElementById('super-edit-cpf').value = u.cpf; document.getElementById('super-edit-city').value = u.city; document.getElementById('super-edit-uf').value = u.uf || "PE"; document.getElementById('super-edit-tel').value = u.tel;
         document.getElementById('super-edit-nasc').value = u.nasc || ""; if(document.getElementById('super-edit-cbc')) document.getElementById('super-edit-cbc').value = u.cbc || ""; const newPassInput = document.getElementById('super-edit-new-pass'); if(newPassInput) newPassInput.value = "";
-        const catSelect = document.getElementById('super-edit-cat'); const allCats = db.config.categories.filter(c => c.active).sort((a,b) => a.name.localeCompare(b.name)); catSelect.innerHTML = allCats.map(c => `<option value="${c.name}">${c.name}</option>`).join('');
+        const catSelect = document.getElementById('super-edit-cat'); const allCats = db.config.categories.filter(c => c.active).sort((a, b) => comparePublicCategories(a.name, b.name)); catSelect.innerHTML = allCats.map(c => `<option value="${c.name}">${c.name}</option>`).join('');
         catSelect.value = u.cat; openModal('modal-super-edit'); 
     } 
 };
@@ -5909,7 +5755,7 @@ window.reCalcCat = function() {
     if(!gender) return;
     let allowedManual = [];
     if (gender === 'F') { allowedManual = ["FEMININO ELITE", "FEMININO MASTER"]; } else { allowedManual = ["ELITE", "OPEN", "RÍGIDA", "ESTREANTE", "E-BIKE", "PCD"]; }
-    const visibleCats = db.config.categories.filter(c => { const cleanName = c.name.trim().toUpperCase(); return c.active === true && allowedManual.includes(cleanName); }).sort((a,b) => a.name.localeCompare(b.name));
+    const visibleCats = db.config.categories.filter(c => { const cleanName = c.name.trim().toUpperCase(); return c.active === true && allowedManual.includes(cleanName); }).sort((a, b) => comparePublicCategories(a.name, b.name));
     const currentSel = overrideSel.value; overrideSel.innerHTML = '<option value="">(SEGUIR CÁLCULO DE IDADE)</option>' + visibleCats.map(c => `<option value="${c.name}">${c.name}</option>`).join('');
     if (visibleCats.some(c => c.name === currentSel)) { overrideSel.value = currentSel; } else { overrideSel.value = ""; }
     if(!birthDate) return;
@@ -5962,7 +5808,7 @@ window.renderAdmCategories = function() {
         return;
     }
     
-    const sortedCats = [...db.config.categories].sort((a,b) => a.name.localeCompare(b.name));
+    const sortedCats = [...db.config.categories].sort((a, b) => comparePublicCategories(a.name, b.name));
     
     list.innerHTML = sortedCats.map(c => {
         const isActive = c.active;
@@ -6236,12 +6082,15 @@ window.addEvent = function() {
             'MASTER A': getVal('adm-evt-v-mastera'),
             'MASTER B': getVal('adm-evt-v-masterb'),
             'MASTER C': getVal('adm-evt-v-masterc'),
-            'RÍGIDA': getVal('adm-evt-v-rigida-non')
+            'RÍGIDA': getVal('adm-evt-v-rigida-non'),
+            'ENDURO': getVal('adm-evt-v-enduro-non')
         };
-        const extra1Name = getVal('adm-evt-n-extra1').toUpperCase();
-        if (extra1Name) extraVals[extra1Name] = getVal('adm-evt-v-extra1');
-        const extra2Name = getVal('adm-evt-n-extra2').toUpperCase();
-        if (extra2Name) extraVals[extra2Name] = getVal('adm-evt-v-extra2');
+        for (const slot of [1, 2]) {
+            const name = getVal('adm-evt-n-extra' + slot).trim().toUpperCase();
+            if (!name) continue;
+            const isEnduro = registrationCategoryName(name) === 'ENDURO';
+            if (!isEnduro || !extraVals.ENDURO) extraVals[isEnduro ? 'ENDURO' : name] = getVal('adm-evt-v-extra' + slot);
+        }
         Object.keys(extraVals).forEach(k => { if(!extraVals[k]) delete extraVals[k]; });
     } else {
         geralVal = getVal('adm-evt-v');
@@ -6416,6 +6265,10 @@ window.editEvent = function(id) {
         setAndSave('adm-evt-type', type);
         const additionalSeals = window.DHNDScoring.eventSeals(e).filter(seal => seal !== type);
         eventSealFields().forEach((field, index) => setAndSave(field.id, additionalSeals[index] || ''));
+        const enduroFee = e.type === 'NON_OFFICIAL'
+            ? Object.entries(e.extraVals || {}).filter(([name]) => registrationCategoryName(name) === 'ENDURO').at(-1)?.[1]
+            : undefined;
+        setAndSave('adm-evt-v-enduro-non', enduroFee == null ? '' : String(enduroFee));
         if (e.type === 'NON_OFFICIAL') {
             if(e.extraVals) {
                 setAndSave('adm-evt-v-elite', e.extraVals['ELITE'] || '');
@@ -6428,7 +6281,8 @@ window.editEvent = function(id) {
                 setAndSave('adm-evt-v-masterc', e.extraVals['MASTER C'] || '');
                 setAndSave('adm-evt-v-rigida-non', e.extraVals['RÍGIDA'] || '');
                 const defaultKeys = ['ELITE', 'FEMININO', 'SUB-30', 'JUNIOR', 'INICIANTE', 'MASTER A', 'MASTER B', 'MASTER C', 'RÍGIDA'];
-                const customKeys = Object.keys(e.extraVals).filter(k => !defaultKeys.includes(k));
+                const customKeys = Object.keys(e.extraVals)
+                    .filter(k => !defaultKeys.includes(k) && registrationCategoryName(k) !== 'ENDURO');
                 
                 if (customKeys.length > 0) { setAndSave('adm-evt-n-extra1', customKeys[0]); setAndSave('adm-evt-v-extra1', e.extraVals[customKeys[0]]); } 
                 else { setAndSave('adm-evt-n-extra1', ''); setAndSave('adm-evt-v-extra1', ''); }
@@ -6570,7 +6424,7 @@ window.compartilListaInscritos = function() {
     if (totalInscritos === 0) return toast("NENHUM ATLETA INSCRITO NESTE EVENTO", "error");
     let printWin = window.open('', '_blank');
     let html = `<html><head><title>Lista de Inscritos - ${evt.t}</title><style>body { font-family: Arial, sans-serif; margin: 0; padding: 20px; color: #333; } h1 { text-align: center; color: #0038a8; margin-bottom: 5px; text-transform: uppercase; font-size: 22px; } h2 { text-align: center; color: #666; margin-top: 0; margin-bottom: 20px; font-size: 14px; text-transform: uppercase; } .resumo-box { border: 2px solid #0038a8; padding: 15px; border-radius: 8px; margin-bottom: 20px; background: #f8fafc; } .resumo-title { font-weight: bold; color: #0038a8; font-size: 16px; margin-bottom: 10px; border-bottom: 1px solid #ccc; padding-bottom: 5px; } table { width: 100%; border-collapse: collapse; margin-top: 10px; margin-bottom: 20px; } th, td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; font-size: 12px; text-transform: uppercase; } th { background-color: #f0f0f0; color: #333; font-weight: bold; } .status-CONFIRMADO { color: #15803d; font-weight: bold; } .status-ISENTO { color: #0284c7; font-weight: bold; } .status-PENDENTE { color: #d65a00; font-weight: bold; } .pos { width: 30px; text-align: center; font-weight: bold; color: #666; } .cat-title { background: #0038a8; color: white; padding: 8px; font-weight: bold; font-size: 14px; border-radius: 4px 4px 0 0; margin-bottom: 0; margin-top: 20px; } .footer { text-align: center; margin-top: 30px; font-size: 10px; color: #999; } @media print { @page { margin: 1cm; size: A4 portrait; } button { display: none !important; } body { padding: 0; } .cat-title { background-color: #0038a8 !important; color: white !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; } .resumo-box { background-color: #f8fafc !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; } }</style></head><body><div style="text-align:center; margin-bottom: 20px; display: flex; justify-content: center; gap: 15px;"><button onclick="window.print()" style="padding:12px 24px; font-size:14px; font-weight:bold; background:#009b3a; color:white; border:none; border-radius:6px; cursor:pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">🖨️ SALVAR COMO PDF / IMPRIMIR</button><button onclick="window.close()" style="padding:12px 24px; font-size:14px; font-weight:bold; background:#d50000; color:white; border:none; border-radius:6px; cursor:pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">❌ FECHAR</button></div><h1>${evt.t}</h1><h2>RELAÇÃO OFICIAL DE INSCRITOS</h2><div class="resumo-box"><div class="resumo-title">RESUMO DO EVENTO</div><p style="margin: 5px 0;"><b>TOTAL GERAL DE INSCRITOS:</b> ${totalInscritos} atleta(s)</p><p style="margin: 5px 0;"><b>VALOR ARRECADADO (APENAS PAGOS):</b> R$ ${totalArrecadado.toFixed(2).replace('.', ',')}</p><div style="margin-top: 15px; border-top: 1px dashed #ccc; padding-top: 10px;"><b style="font-size: 12px; color: #666; display: block; margin-bottom: 8px;">INSCRITOS POR CATEGORIA:</b><div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px;">`;
-    let catKeys = Object.keys(contagemPorCategoria).sort();
+    let catKeys = Object.keys(contagemPorCategoria).sort(comparePublicCategories);
     catKeys.forEach(cat => { html += `<div style="font-size: 11px; background: white; padding: 5px 8px; border: 1px solid #ddd; border-radius: 4px;"><b>${cat}:</b> ${contagemPorCategoria[cat]}</div>`; });
     html += `</div></div></div>`; 
     catKeys.forEach(cat => {
@@ -6614,7 +6468,7 @@ window.gerarExcelCBC = function() {
             });
 
             let listArray = Object.values(pilotResults);
-            let cats = [...new Set(listArray.map(item => item.cat))].sort();
+            let cats = [...new Set(listArray.map(item => item.cat))].sort(comparePublicCategories);
 
             let ws_data = []; let merges = []; let rowIndex = 0;
 
@@ -6706,7 +6560,7 @@ window.gerarExcelLargada = function() {
             }
 
             inscritos.sort((a, b) => {
-                if (a.cat !== b.cat) return a.cat.localeCompare(b.cat);
+                if (a.cat !== b.cat) return comparePublicCategories(a.cat, b.cat);
                 if (a.qualify && b.qualify) return b.qualify.localeCompare(a.qualify);
                 return a.nome.localeCompare(b.nome);
             });
@@ -7300,76 +7154,8 @@ window.gerarExcelLargada = function(selection = null) {
             });
 
 
-            // =================================================
-            // ORDEM DAS CATEGORIAS
-            // =================================================
-            const ordemDesejada = [
-
-                "ESTREANTE",
-                "ESTREANTE (EXTRA)",
-
-                "RIGIDA",
-                "RÍGIDA",
-                "RÍGIDA (EXTRA)",
-
-                "OPEN",
-                "OPEN (EXTRA)",
-
-                "ELITE FEMININA",
-                "FEMININO ELITE",
-                "FEMININO",
-
-                "INFANTO-JUVENIL",
-                "JUVENIL",
-
-                "PCD",
-                "PCD (EXTRA)",
-
-                "MASTER D",
-                "MASTER C2",
-                "MASTER C1",
-                "MASTER C",
-
-                "MASTER B2",
-                "MASTER B1",
-                "MASTER B",
-
-                "MASTER A2",
-                "MASTER A1",
-                "MASTER A",
-
-                "E-BIKE",
-                "E-BIKE (EXTRA)",
-
-                "JUNIOR",
-                "SUB-30",
-                "ELITE"
-
-            ];
-
-
             inscritos.sort((a, b) => {
-
-                let indexA =
-                    ordemDesejada.indexOf(a.cat);
-
-                let indexB =
-                    ordemDesejada.indexOf(b.cat);
-
-
-                if (indexA === -1) {
-                    indexA = 999;
-                }
-
-                if (indexB === -1) {
-                    indexB = 999;
-                }
-
-
-                if (indexA !== indexB) {
-                    return indexA - indexB;
-                }
-
+                if (a.cat !== b.cat) return comparePublicCategories(a.cat, b.cat);
 
                 // Na lista OFICIAL,
                 // quem teve melhor qualify larga depois.
@@ -7994,12 +7780,14 @@ window.renderAdmResults = function() {
             const evtObj = db.events.find(e => String(e.id) === String(evtId));
             if (evtObj && evtObj.type === 'NON_OFFICIAL' && evtObj.extraVals) {
                 catsToShow = Object.keys(evtObj.extraVals).filter(k => evtObj.extraVals[k] && String(evtObj.extraVals[k]).trim() !== "");
-                catsToShow.sort((a,b) => a.localeCompare(b));
+                if (db.config?.categories?.some(category => category.name === 'ENDURO' && category.active)
+                    && !catsToShow.some(name => window.normalizeCatName(name) === 'ENDURO')) catsToShow.push('ENDURO');
+                catsToShow.sort(comparePublicCategories);
             }
         }
         
         if (catsToShow.length === 0 && db.config && db.config.categories) {
-            catsToShow = db.config.categories.filter(c => c.active).map(c => c.name).sort((a,b) => a.localeCompare(b));
+            catsToShow = db.config.categories.filter(c => c.active).map(c => c.name).sort(comparePublicCategories);
         }
         
         catsToShow.forEach(c => { catHtml += `<option value="${c}">${c}</option>`; });
@@ -8452,7 +8240,7 @@ function gatherAndPushData(win) {
     }
     
     // Gera os filtros dinamicamente baseados SÓ nos atletas que vão correr
-    let activeCategories = [...new Set(liveDataArray.map(a => a.category))].sort((a,b) => a.localeCompare(b));
+    let activeCategories = [...new Set(liveDataArray.map(a => a.category))].sort(comparePublicCategories);
     if (activeCategories.length === 0) activeCategories = ["GERAL"];
     
     if (win && win.receiveData) { 
@@ -9258,37 +9046,7 @@ window.imprimirOrdemLargadaGeral = function() {
     
     let cats = [...new Set(inscritos.map(a => a.cat))];
     
-    // Array com a ordem exata desejada (inclui variações extras por segurança)
-    const ordemDesejada = [
-        "ESTREANTE", "ESTREANTE (EXTRA)",
-        "RIGIDA", "RÍGIDA", "RÍGIDA (EXTRA)",
-        "OPEN", "OPEN (EXTRA)",
-        "ELITE FEMININA", "FEMININO ELITE", "FEMININO",
-        "INFANTO-JUVENIL",
-        "JUVENIL",
-        "PCD", "PCD (EXTRA)",
-        "MASTER D",
-        "MASTER C2",
-        "MASTER C1", "MASTER C",
-        "MASTER B2",
-        "MASTER B1", "MASTER B",
-        "MASTER A2",
-        "MASTER A1", "MASTER A",
-        "E-BIKE", "E-BIKE (EXTRA)",
-        "JUNIOR",
-        "SUB-30",
-        "ELITE"
-    ];
-
-    // Aplica a ordenação customizada nas categorias
-    cats.sort((a, b) => {
-        let indexA = ordemDesejada.indexOf(a);
-        let indexB = ordemDesejada.indexOf(b);
-        if (indexA === -1) indexA = 999; // Se a categoria não estiver na lista, vai pro final
-        if (indexB === -1) indexB = 999;
-        if (indexA !== indexB) return indexA - indexB;
-        return a.localeCompare(b); // Desempate em ordem alfabética caso as duas não estejam na lista
-    });
+    cats.sort(comparePublicCategories);
 
     let html = `<html><head><title>Ordem de Largada - ${evt.t}</title>
     <style>

@@ -39,8 +39,13 @@ function fixtures(eventId = 987654321027) {
   };
 }
 
-function generate(source, run = '1st', eventId, selectedId) {
-  const db = fixtures(eventId), original = clone(db), files = [], messages = [], errors = [];
+function generate(source, run = '1st', eventId, selectedId, categories = []) {
+  const db = fixtures(eventId), files = [], messages = [], errors = [];
+  categories.forEach((cat, index) => db.users.push({
+    cpf:String(index + 1).padStart(11,'0'), nome:'ATLETA ' + cat, cat, city:'JUPI',
+    inscricoes:[{id:db.events[0].id,status:'CONFIRMADO',placa:String(index + 10)}]
+  }));
+  const original = clone(db);
   const button = {tagName:'BUTTON',innerHTML:'LARGADA',disabled:false};
   const nodes = {'adm-res-evt':{value:selectedId === undefined ? String(db.events[0].id) : selectedId},'adm-res-runtype':{value:run}};
   const c = {
@@ -57,6 +62,8 @@ function generate(source, run = '1st', eventId, selectedId) {
   };
   c.window=c;
   vm.createContext(c);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'ranking-policy.js'),'utf8'),c);
+  c.comparePublicCategories = c.DHNDCategories.compareStartOrder;
   vm.runInContext(exporter(source),c,{filename:'real-gerarExcelLargada.js'});
   c.gerarExcelLargada();
   assert.deepEqual(errors,[],'Exporter swallowed an unexpected error');
@@ -139,6 +146,11 @@ function runSuite(options={}) {
     const {book}=generate(source,'1st',eventId).files[0];
     assert.deepEqual(rowValues(book.Sheets.CONFIG),configRows(eventId,'OFICIAL'));
     validateAppsScript(appsScript,book,eventId,'OFICIAL');
+  });
+  test('start workbook orders RÍGIDA, ENDURO and OPEN as consecutive categories',()=>{
+    const {book}=generate(source,'qualify',undefined,undefined,['OPEN','ENDURO','RÍGIDA']).files[0];
+    const categories=rowValues(book.Sheets[book.SheetNames[0]]).slice(1).filter(row=>row[2]).map(row=>row[2]);
+    assert.deepEqual(categories.slice(0,3),['RÍGIDA','ENDURO','OPEN']);
   });
   test('no selected event never downloads a workbook',()=>{
     const result=generate(source,'1st',undefined,'');assert.equal(result.files.length,0);assert.equal(result.messages.at(-1)[1],'error');
