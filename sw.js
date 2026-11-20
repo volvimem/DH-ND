@@ -114,7 +114,7 @@ self.addEventListener("notificationclick", (event) => {
 // ==========================================================
 // PARTE 2: PWA E CACHE
 // ==========================================================
-const CACHE_NAME = 'dhnd-dnf-qualify-season-history-20261120';
+const CACHE_NAME = 'dhnd-dnf-mobile-layout-20261120';
 const APP_SCOPE = new URL(self.registration.scope);
 const STATIC_CACHE_PREFIX = `dhnd-official-static:${APP_SCOPE.href}:`;
 const STATIC_CACHE = STATIC_CACHE_PREFIX + CACHE_NAME;

@@ -146,6 +146,7 @@
     const runningSection = element('started');
     const search = element('search');
     const category = element('category');
+    const compactLayout = window.matchMedia?.('(max-width: 720px)');
     const eligible = new Set(['CONFIRMADO', 'ISENTO']);
     const comparator = new Intl.Collator('pt-BR', {numeric:true, sensitivity:'base'});
     const simplify = value => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().trim();
@@ -230,6 +231,11 @@
         if (typeof contents === 'string') td.textContent = contents;
         else td.append(contents);
         return td;
+    }
+
+    function placeDnfButton(row) {
+        const target = compactLayout?.matches ? row.categoryCell : row.resultCell;
+        if (row.dnfButton.parentNode !== target) target.append(row.dnfButton);
     }
 
     function clockField(label, athlete) {
@@ -354,9 +360,11 @@
         dnfButton.className = 'direct-timing-dnf';
         dnfButton.textContent = 'DNF';
         dnfButton.setAttribute('aria-label', 'Registrar DNF · ' + athlete.name + ' · ' + athlete.cat);
+        const categoryCell = cell('Categoria', athlete.cat);
         const resultCell = cell('Resultado', output);
-        resultCell.append(note, retry, dnfButton);
-        const row = {key, athlete, tr, start, finish, output, note, retry, dnfButton, query:simplify([athlete.num, athlete.name, athlete.cat].join(' '))};
+        resultCell.append(note, retry);
+        const row = {key, athlete, tr, start, finish, output, note, retry, dnfButton, categoryCell, resultCell,
+            query:simplify([athlete.num, athlete.name, athlete.cat].join(' '))};
         row.category = categoryKey(athlete.cat);
         const draft = context.drafts.get(key);
         row.startTime = restoreClock(draft?.start, 'start');
@@ -408,8 +416,9 @@
             filterRows();
             void publish(context, row);
         });
-        tr.append(cell('Placa', athlete.num || '—'), cell('Atleta', athlete.name), cell('Categoria', athlete.cat),
+        tr.append(cell('Placa', athlete.num || '—'), cell('Atleta', athlete.name), categoryCell,
             cell('Hora de largada', start), cell('Hora de chegada', finish), resultCell);
+        placeDnfButton(row);
         return row;
     }
 
@@ -543,5 +552,11 @@
     });
     search.addEventListener('input', filterRows);
     category.addEventListener('change', filterRows);
+    compactLayout?.addEventListener?.('change', () => {
+        if (!session) return;
+        const focused = document.activeElement;
+        for (const row of session.rows.values()) placeDnfButton(row);
+        if (focused?.isConnected && focused !== document.activeElement) focused.focus({preventScroll:true});
+    });
     window.DHNDDirectDesk = {open, refresh, close:() => { if (dialog.open) dialog.close(); }};
 })();

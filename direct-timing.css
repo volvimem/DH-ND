@@ -160,6 +160,11 @@
     .direct-timing-table td:nth-child(1) { grid-column: 2; grid-row: 1; text-align: right; }
     .direct-timing-table td:nth-child(2) { grid-column: 1; grid-row: 1; font-weight: 700; }
     .direct-timing-table td:nth-child(3), .direct-timing-table td:nth-child(6) { grid-column: 1 / -1; }
+    #direct-timing-dialog .direct-timing-table button.direct-timing-dnf {
+        display: inline-block;
+        margin: 0 0 0 .5rem;
+        vertical-align: middle;
+    }
 }
 
 @media (max-width: 540px) {
