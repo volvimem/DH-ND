@@ -2752,6 +2752,7 @@ window.verOrdemLargada = function() {
         // TODOS OS ATLETAS CONFIRMADOS/ISENTOS DA ETAPA
         // ==================================================
         const competidores = [];
+        const qualifyFor = window.DHNDCategories.qualifyResults(evt.id, db.tempos, window.normalizeCatName);
 
 
         db.users.forEach(u => {
@@ -2780,43 +2781,6 @@ window.verOrdemLargada = function() {
                     );
 
 
-                // ===========================================
-                // PROCURA QUALIFY DO ATLETA
-                // ===========================================
-                const tQ =
-                    (db.tempos || []).find(t =>
-
-                        t &&
-
-                        String(t.evtId) ===
-                            String(evt.id) &&
-
-                        cleanCPF(t.cpf) ===
-                            cleanCPF(u.cpf) &&
-
-                        t.runType === 'qualify' &&
-
-                        window.normalizeCatName(
-                            t.cat
-                        ) === cat
-                    );
-
-
-                let qualify = '';
-
-
-                if (
-                    tQ &&
-                    tQ.val &&
-                    tQ.val !== '--:--.---' &&
-                    tQ.val !== 'DNF'
-                ) {
-
-                    qualify =
-                        tQ.val;
-                }
-
-
                 competidores.push({
 
                     cpf:
@@ -2836,8 +2800,7 @@ window.verOrdemLargada = function() {
 
                     placa: getPlacaAtletaEvento(u, evt.id, insc),
 
-                    qualify:
-                        qualify
+                    qualify: qualifyFor(u.cpf, cat)
 
                 });
 
@@ -2914,42 +2877,7 @@ window.verOrdemLargada = function() {
                 );
 
 
-            lista.sort((a, b) => {
-
-                // Quem não tem qualify fica antes.
-                // Melhor qualify larga depois.
-                if (
-                    a.qualify ||
-                    b.qualify
-                ) {
-
-                    const tempoA =
-                        a.qualify
-                            ? tempoParaMilissegundos(
-                                a.qualify
-                            )
-                            : Infinity;
-
-
-                    const tempoB =
-                        b.qualify
-                            ? tempoParaMilissegundos(
-                                b.qualify
-                            )
-                            : Infinity;
-
-
-                    if (tempoA !== tempoB) {
-                        return tempoB - tempoA;
-                    }
-                }
-
-
-                return a.name.localeCompare(
-                    b.name
-                );
-
-            });
+            lista.sort((a, b) => window.DHNDCategories.compareQualifyStart(a.qualify, b.qualify) || a.name.localeCompare(b.name, 'pt-BR'));
 
 
             listasPorCat[cat] =
@@ -3632,6 +3560,7 @@ window.renderModoCorrida = function() {
     const runTypeDb = runTypeUi === 'oficial' ? '1st' : (runTypeUi === 'segunda' ? '2nd' : 'qualify');
     const runLabel = runTypeUi === 'qualify' ? 'QUALIFY' : (runTypeUi === 'segunda' ? '2ª DESCIDA' : 'DESCIDA OFICIAL');
     const cpfLogado = cleanCPF(loggedUser.cpf);
+    const qualifyFor = window.DHNDCategories.qualifyResults(evt.id, db.tempos, window.normalizeCatName);
 
     const minhasInscricoes = (loggedUser.inscricoes || []).filter(i =>
         String(i.id) === String(evt.id) &&
@@ -3724,21 +3653,17 @@ window.renderModoCorrida = function() {
             }
         }
 
-        const fonteTempo = runTypeUi === 'oficial' ? 'qualifyObj' : (runTypeUi === 'segunda' ? 'oficialObj' : null);
-
         competidores.sort((a, b) => {
-            if (!fonteTempo) return a.nome.localeCompare(b.nome);
-
-            const objA = a[fonteTempo];
-            const objB = b[fonteTempo];
-            let tA = objA && objA.val ? tempoParaMilissegundos(objA.val) : 99999999;
-            let tB = objB && objB.val ? tempoParaMilissegundos(objB.val) : 99999999;
-
-            if (tA === Infinity && tB === Infinity) return a.nome.localeCompare(b.nome);
-            if (tA === Infinity) return -1;
-            if (tB === Infinity) return 1;
-            if (tA !== 99999999 || tB !== 99999999) return tB - tA;
-            return a.nome.localeCompare(b.nome);
+            const nameOrder = a.nome.localeCompare(b.nome, 'pt-BR');
+            if (runTypeUi === 'oficial') {
+                return window.DHNDCategories.compareQualifyStart(qualifyFor(a.cpf, a.cat), qualifyFor(b.cpf, b.cat)) || nameOrder;
+            }
+            if (runTypeUi === 'segunda') {
+                const tempoA = tempoParaMilissegundos(a.oficialObj?.val);
+                const tempoB = tempoParaMilissegundos(b.oficialObj?.val);
+                if (tempoA !== tempoB) return tempoB - tempoA;
+            }
+            return nameOrder;
         });
 
         const campoAtual = runTypeUi === 'qualify' ? 'qualifyObj' : (runTypeUi === 'segunda' ? 'segundaObj' : 'oficialObj');
@@ -3835,17 +3760,49 @@ window.renderModoCorrida = function() {
 };
 
 window.renderPilotHistoryModal = function(cpf, name) {
-    const histDiv = document.getElementById('my-history-list'); if(!histDiv) return;
-    openModal('modal-history'); const titleEl = document.querySelector('#modal-history h3'); if(titleEl) titleEl.innerText = `HISTÓRICO: ${name}`; const user = db.users.find(u => u.cpf === cpf);
-    let html = "";
-    if(user && user.inscricoes && user.inscricoes.length > 0) { html += `<div style="background:#f0f9ff; padding:8px; border-radius:5px; margin-bottom:10px;"><b style="color:#0038a8; font-size:12px;">INSCRIÇÕES</b>`;
-    user.inscricoes.forEach(i => { const evt = db.events.find(e => String(e.id) === String(i.id)); const evtName = evt ? evt.t : "Evento " + i.id; const extra = i.extraCat ? `(${i.extraCat})` : '<span style="color:#0038a8; font-weight:bold; font-size:10px; background:#e0e7ff; padding:2px 4px; border-radius:4px;">(CATEGORIA OFICIAL)</span>'; html += `<div style="font-size:11px; margin-top:5px; border-bottom:1px solid #dee;">${evtName} ${extra} <span style="float:right">${i.status}</span></div>`; });
-    html += `</div>`; }
-    const times = db.tempos.filter(t => t.cpf === cpf);
-    if(times.length > 0) { html += `<div style="background:#f0fdf4; padding:8px; border-radius:5px;"><b style="color:#15803d; font-size:12px;">TEMPOS</b>`;
-    times.forEach(t => { const evt = db.events.find(e => String(e.id) === String(t.evtId)); let evtCity = evt && evt.city ? evt.city : "Cidade não informada"; let typeBadge = ""; if(t.runType === 'qualify') typeBadge = `<span style="background:#E6E6FA; color:#4B0082; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:9px;">QUALIFY</span>`; else if(t.runType === '2nd') typeBadge = `<span style="background:#fff3e0; color:#d65a00; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:9px;">2ª DESCIDA</span>`; else typeBadge = `<span style="background:#dcfce7; color:#166534; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:9px;">OFICIAL</span>`; let clockHtml = t.startClock ? `<div style="font-size:9px; color:#059669; font-weight:bold; margin-top:2px;"><i class="fas fa-flag-checkered"></i> Largada: ${t.startClock}</div>` : ''; html += `<div style="font-size:11px; margin-top:5px; border-bottom:1px solid #dee; display:flex; justify-content:space-between; align-items:center;"><div><span>${evt ? evt.t : t.evtId}</span><br><div style="font-size:9px; color:#666; margin-top:2px;"><i class="fas fa-map-marker-alt"></i> ${evtCity}</div><div style="display:flex; gap:5px; align-items:center; margin-top:2px;">${typeBadge}<span style="font-size:10px; color:#333; font-weight:bold;">${t.cat}</span></div>${clockHtml}</div><b style="font-family:monospace">${t.val}</b></div>`; });
-    html += `</div>`; }
-    if(html === "") html = "<div style='text-align:center; color:#999; padding:20px'>Nenhum registro.</div>"; histDiv.innerHTML = html;
+    const histDiv = document.getElementById('my-history-list');
+    if (!histDiv) return;
+
+    const athlete = publicAthleteKey(cpf);
+    const user = athlete ? db.users.find(profile => publicAthleteKey(profile.cpf) === athlete) : null;
+    const events = new Map(getSeasonEvents().filter(event => event.id != null).map(event => [String(event.id), event]));
+    const entries = Object.values(user?.inscricoes || {}).filter(entry => entry?.id != null && events.has(String(entry.id)));
+    const times = athlete ? db.tempos.filter(time => time?.evtId != null &&
+        publicAthleteKey(time.cpf) === athlete && events.has(String(time.evtId))) : [];
+    const titleEl = document.querySelector('#modal-history h3');
+    if (titleEl) titleEl.innerText = `HISTÓRICO ${SYSTEM_YEAR} · ${name || user?.nome || 'ATLETA'}`;
+
+    let html = '';
+    if (entries.length) {
+        html += '<div style="background:#f0f9ff; padding:8px; border-radius:5px; margin-bottom:10px;"><b style="color:#0038a8; font-size:12px;">INSCRIÇÕES</b>';
+        for (const entry of entries) {
+            const event = events.get(String(entry.id));
+            const eventName = escapeRegistrationOption(event.t || 'Evento ' + entry.id);
+            const category = entry.extraCat ? `(${escapeRegistrationOption(entry.extraCat)})` :
+                '<span style="color:#0038a8; font-weight:bold; font-size:10px; background:#e0e7ff; padding:2px 4px; border-radius:4px;">(CATEGORIA OFICIAL)</span>';
+            html += `<div style="font-size:11px; margin-top:5px; border-bottom:1px solid #dee;">${eventName} ${category} <span style="float:right">${escapeRegistrationOption(entry.status || "")}</span></div>`;
+        }
+        html += '</div>';
+    }
+    if (times.length) {
+        html += '<div style="background:#f0fdf4; padding:8px; border-radius:5px;"><b style="color:#15803d; font-size:12px;">TEMPOS</b>';
+        for (const time of times) {
+            const event = events.get(String(time.evtId));
+            const eventName = escapeRegistrationOption(event.t || 'Evento ' + time.evtId);
+            const city = escapeRegistrationOption(event.city || 'Cidade não informada');
+            let typeBadge = '<span style="background:#dcfce7; color:#166534; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:9px;">OFICIAL</span>';
+            if (time.runType === 'qualify') {
+                typeBadge = '<span style="background:#E6E6FA; color:#4B0082; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:9px;">QUALIFY</span>';
+            } else if (time.runType === '2nd') {
+                typeBadge = '<span style="background:#fff3e0; color:#d65a00; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:9px;">2ª DESCIDA</span>';
+            }
+            const clockHtml = time.startClock ? `<div style="font-size:9px; color:#059669; font-weight:bold; margin-top:2px;"><i class="fas fa-flag-checkered"></i> Largada: ${escapeRegistrationOption(time.startClock)}</div>` : '';
+            html += `<div style="font-size:11px; margin-top:5px; border-bottom:1px solid #dee; display:flex; justify-content:space-between; align-items:center;"><div><span>${eventName}</span><br><div style="font-size:9px; color:#666; margin-top:2px;"><i class="fas fa-map-marker-alt"></i> ${city}</div><div style="display:flex; gap:5px; align-items:center; margin-top:2px;">${typeBadge}<span style="font-size:10px; color:#333; font-weight:bold;">${escapeRegistrationOption(time.cat || "")}</span></div>${clockHtml}</div><b style="font-family:monospace">${escapeRegistrationOption(time.val || "")}</b></div>`;
+        }
+        html += '</div>';
+    }
+    histDiv.innerHTML = html || `<div style="text-align:center; color:#999; padding:20px">Nenhum registro na temporada ${SYSTEM_YEAR}.</div>`;
+    openModal('modal-history');
 };
 
 // ==========================================================
@@ -3956,6 +3913,7 @@ function publicAthleteState(profile) {
 }
 
 function publicFilterState(region) {
+    if (region === 'PE') return 'PE';
     const uf = String(region).startsWith('UF:') ? region.slice(3) : '';
     return BRAZILIAN_STATES[uf] ? uf : '';
 }
@@ -3971,16 +3929,15 @@ function populatePublicRegionFilter(tab, athletes) {
         .map(uf => `<option value="UF:${uf}">${BRAZILIAN_STATES[uf]} (${uf})</option>`).join('');
     if (group.innerHTML !== options) group.innerHTML = options;
     group.hidden = states.size === 0;
-    select.value = preferred === 'PE' || preferred === 'NORDESTE' || states.has(publicFilterState(preferred))
-        ? preferred : 'NORDESTE';
+    const preferredState = publicFilterState(preferred);
+    select.value = states.has(preferredState) ? 'UF:' + preferredState : 'NORDESTE';
 }
 
 function restrictPublicAthletes(rows, region, athletes) {
     const uf = publicFilterState(region);
-    if (!uf && region !== 'PE') return rows;
+    if (!uf) return rows;
     return rows.filter(row => {
         const profile = athletes.get(publicAthleteKey(row.cpf));
-        if (region === 'PE') return profile && (profile.uf === 'PE' || !profile.uf || profile.filiadoPE === true);
         return (publicAthleteState(profile) || athleteStateFromCity(row.city)) === uf;
     });
 }
@@ -3989,7 +3946,6 @@ function publicRegionCaption(tab, region) {
     const uf = publicFilterState(region);
     const prefix = tab === 'ranking' ? 'RANKING' : 'RESULTADO';
     if (uf) return `${prefix} NORDESTE · ${BRAZILIAN_STATES[uf]} (${uf})`;
-    if (region === 'PE') return prefix + ' PERNAMBUCO';
     return prefix + (tab === 'ranking' ? ' NORDESTE' : ' NORDESTE (OPEN)');
 }
 
@@ -6536,17 +6492,14 @@ window.gerarExcelLargada = function() {
     setTimeout(() => {
         try {
             let inscritos = [];
+            const qualifyFor = window.DHNDCategories.qualifyResults(evtId, db.tempos, window.normalizeCatName);
             db.users.forEach(u => {
                 if (u.inscricoes) {
                     u.inscricoes.forEach(i => {
                         if (String(i.id) === String(evtId) && (i.status === 'CONFIRMADO' || i.status === 'ISENTO')) {
                             let cat = window.normalizeCatName(i.extraCat || u.cat);
                             
-                            let qTime = "";
-                            if(db.tempos) {
-                                let tQ = db.tempos.find(t => String(t.evtId) === String(evtId) && t.cpf === u.cpf && t.runType === 'qualify' && t.cat === cat);
-                                if (tQ && tQ.val && tQ.val !== '--:--.---' && tQ.val !== 'DNF') qTime = tQ.val;
-                            }
+                            const qTime = qualifyFor(u.cpf, cat);
                             
                             inscritos.push({
                                 ordem: 0,
@@ -6569,8 +6522,7 @@ window.gerarExcelLargada = function() {
 
             inscritos.sort((a, b) => {
                 if (a.cat !== b.cat) return comparePublicCategories(a.cat, b.cat);
-                if (a.qualify && b.qualify) return b.qualify.localeCompare(a.qualify);
-                return a.nome.localeCompare(b.nome);
+                return window.DHNDCategories.compareQualifyStart(a.qualify, b.qualify) || a.nome.localeCompare(b.nome, 'pt-BR');
             });
 
             let ws_data = [
@@ -7088,10 +7040,7 @@ window.gerarExcelLargada = function(selection = null) {
                                 : '',
 
                         cpf:
-                            u.cpf,
-
-                        qualify:
-                            ''
+                            u.cpf
                     });
 
 
@@ -7120,69 +7069,14 @@ window.gerarExcelLargada = function(selection = null) {
             }
 
 
-            // =================================================
-            // PARA ORDEM DA LARGADA OFICIAL:
-            // BUSCA O QUALIFY, QUANDO EXISTIR
-            // =================================================
-            inscritos.forEach(p => {
-
-                if (!db.tempos) {
-                    return;
-                }
-
-
-                const tQ =
-                    db.tempos.find(t =>
-
-                        t &&
-
-                        String(t.evtId) ===
-                            String(evtId) &&
-
-                        t.cpf === p.cpf &&
-
-                        t.runType === 'qualify' &&
-
-                        window.normalizeCatName(t.cat) ===
-                            p.cat
-                    );
-
-
-                if (
-                    tQ &&
-                    tQ.val &&
-                    tQ.val !== '--:--.---' &&
-                    tQ.val !== 'DNF'
-                ) {
-
-                    p.qualify =
-                        tQ.val;
-                }
-
-            });
-
-
+            const qualifyFor = window.DHNDCategories.qualifyResults(evtId, db.tempos, window.normalizeCatName);
             inscritos.sort((a, b) => {
                 if (a.cat !== b.cat) return comparePublicCategories(a.cat, b.cat);
-
-                // Na lista OFICIAL,
-                // quem teve melhor qualify larga depois.
-                if (
-                    runTypeDb === '1st' &&
-                    a.qualify &&
-                    b.qualify
-                ) {
-
-                    return b.qualify.localeCompare(
-                        a.qualify
-                    );
+                if (runTypeDb === '1st') {
+                    const seededOrder = window.DHNDCategories.compareQualifyStart(qualifyFor(a.cpf, a.cat), qualifyFor(b.cpf, b.cat));
+                    if (seededOrder) return seededOrder;
                 }
-
-
-                return a.nome.localeCompare(
-                    b.nome
-                );
-
+                return a.nome.localeCompare(b.nome, 'pt-BR');
             });
 
 
@@ -8192,7 +8086,8 @@ function gatherAndPushData(win) {
     const parseMs = (timeStr) => {
         if(!timeStr || timeStr === "--:--.---") return null; 
         if(timeStr === "DNF") return Infinity; 
-        let parts = timeStr.split(':'); 
+        if (typeof timeStr === 'number') return timeStr;
+        let parts = String(timeStr).replace(',', '.').split(':'); 
         if(parts.length < 2) return null; 
         let m = parseInt(parts[0], 10); 
         let secParts = parts[1].split('.'); 
@@ -8203,6 +8098,7 @@ function gatherAndPushData(win) {
     };
     
     let liveDataArray = [];
+    const qualifyFor = window.DHNDCategories.qualifyResults(evtId, db.tempos, window.normalizeCatName);
     if (typeof db !== 'undefined' && db.users) { 
         db.users.forEach(u => { 
             let nome = (u.nome || u.name || "").toString().trim().toUpperCase(); 
@@ -8240,6 +8136,7 @@ function gatherAndPushData(win) {
                                 } 
                             }); 
                         } 
+                        times.qualify = parseMs(qualifyFor(u.cpf, cat));
                         liveDataArray.push({ id: u.cpf + '||' + cat, originalCpf: u.cpf, name: nome, city: cityUF, region: uf, number: getPlacaAtletaEvento(u, evtId, insc) || "S/N", category: cat, status: insc.status, times: times, startClocks: startClocks, isRerun: false });
                     } 
                 });
@@ -9014,6 +8911,7 @@ window.imprimirOrdemLargadaGeral = function() {
     if (!evt) return toast("Evento não encontrado.", "error");
 
     let inscritos = [];
+    const qualifyFor = window.DHNDCategories.qualifyResults(evtId, db.tempos, window.normalizeCatName);
     db.users.forEach(u => {
         if (u.inscricoes && u.inscricoes.length > 0) {
             u.inscricoes.forEach(i => {
@@ -9026,24 +8924,13 @@ window.imprimirOrdemLargadaGeral = function() {
 ) {
                     let cat = window.normalizeCatName(i.extraCat || u.cat);
                     
-                    let qualifyTime = "99:99.999";
-                    let hasQ = false;
-                    if (db.tempos) {
-                        let tQ = db.tempos.find(t => String(t.evtId) === String(evtId) && t.cpf === u.cpf && t.runType === 'qualify' && t.cat === cat);
-                        if (tQ && tQ.val && tQ.val !== '--:--.---' && tQ.val !== 'DNF') {
-                            qualifyTime = tQ.val;
-                            hasQ = true;
-                        }
-                    }
-                    
                     inscritos.push({
                         nome: u.nome,
                         city: u.city,
                         uf: u.uf || 'PE',
                         cat: cat,
                         num: getPlacaAtletaEvento(u, evtId),
-                        qTime: qualifyTime,
-                        hasQ: hasQ
+                        qTime: qualifyFor(u.cpf, cat)
                     });
                 }
             });
@@ -9079,12 +8966,7 @@ window.imprimirOrdemLargadaGeral = function() {
     cats.forEach(cat => {
         let pilotos = inscritos.filter(a => a.cat === cat);
         
-        pilotos.sort((a, b) => {
-            if (a.hasQ || b.hasQ) {
-                return b.qTime.localeCompare(a.qTime);
-            }
-            return a.nome.localeCompare(b.nome);
-        });
+        pilotos.sort((a, b) => window.DHNDCategories.compareQualifyStart(a.qTime, b.qTime) || a.nome.localeCompare(b.nome, 'pt-BR'));
 
         html += `<div class="cat-title">${cat} <span style="float: right; font-size: 11px; margin-top: 2px;">(${pilotos.length} atletas)</span></div>
         <table>
@@ -9099,7 +8981,7 @@ window.imprimirOrdemLargadaGeral = function() {
             <tbody>`;
         
         pilotos.forEach((p, idx) => {
-            let qDisp = p.hasQ ? p.qTime : "";
+            const qDisp = p.qTime;
             html += `<tr>
                 <td style="text-align: center; font-weight: bold; font-size: 14px;">${idx + 1}º</td>
                 <td style="text-align: center; font-weight: bold; font-size: 14px; color: #d50000;">${p.num}</td>

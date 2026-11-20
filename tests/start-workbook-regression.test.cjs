@@ -39,12 +39,13 @@ function fixtures(eventId = 987654321027) {
   };
 }
 
-function generate(source, run = '1st', eventId, selectedId, categories = []) {
+function generate(source, run = '1st', eventId, selectedId, categories = [], qualifyingTimes = []) {
   const db = fixtures(eventId), files = [], messages = [], errors = [];
   categories.forEach((cat, index) => db.users.push({
     cpf:String(index + 1).padStart(11,'0'), nome:'ATLETA ' + cat, cat, city:'JUPI',
     inscricoes:[{id:db.events[0].id,status:'CONFIRMADO',placa:String(index + 10)}]
   }));
+  qualifyingTimes.forEach(time => db.tempos.push({evtId:db.events[0].id,runType:'qualify',...time}));
   const original = clone(db);
   const button = {tagName:'BUTTON',innerHTML:'LARGADA',disabled:false};
   const nodes = {'adm-res-evt':{value:selectedId === undefined ? String(db.events[0].id) : selectedId},'adm-res-runtype':{value:run}};
@@ -81,7 +82,7 @@ function expectedRows(run,label) {
     {qualify:'09:01:05.000','1st':'09:31:03.250','2nd':''}[run],
     {qualify:'01:05.000','1st':'01:03.250','2nd':'DNF'}[run],run==='1st'?'+2':'','00123456789'];
   const bruno=[0,'002','ELITE','BRUNO TESTE','OLINDA-PE','PENDENTE',label,'','',run==='qualify'?'01:10.000':'','','11223344556'];
-  const elite=run==='1st'?[bruno,ana]:[ana,bruno];
+  const elite=[ana,bruno];
   elite.forEach((row,index)=>{row[0]=index+1;});
   return [headers,carla,Array(12).fill(''),...elite];
 }
@@ -151,6 +152,18 @@ function runSuite(options={}) {
     const {book}=generate(source,'qualify',undefined,undefined,['OPEN','E-BIKE','ENDURO','RÍGIDA','FEMININO ELITE']).files[0];
     const categories=rowValues(book.Sheets[book.SheetNames[0]]).slice(1).filter(row=>row[2]).map(row=>row[2]);
     assert.deepEqual(categories.slice(0,5),['RÍGIDA','ENDURO','OPEN','E-BIKE','FEMININO ELITE']);
+  });
+  test('the official start list puts DNF first, then the fastest qualifying time, then missing times',()=>{
+    const times=[
+      {cpf:'000.000.000-01',cat:'ELITE (EXTRA)',val:'01:04.9'},
+      {cpf:'00000000002',cat:'ELITE',val:'DNF',status:'DNF'},
+      {cpf:'00000000001',cat:'ELITE',val:'DNF'},
+      {cpf:'00000000003',cat:'JUNIOR',val:'00:30.000'},
+      {cpf:'00000000003',evtId:'another-event',cat:'ELITE',val:'00:20.000'},
+    ];
+    const {book}=generate(source,'1st',undefined,undefined,['ELITE','ELITE','ELITE'],times).files[0];
+    const rows=rowValues(book.Sheets[book.SheetNames[0]]).filter(row=>row[2]==='ELITE');
+    assert.deepEqual(rows.map(row=>row[11]),['00000000002','00000000001','00123456789','11223344556','00000000003']);
   });
   test('no selected event never downloads a workbook',()=>{
     const result=generate(source,'1st',undefined,'');assert.equal(result.files.length,0);assert.equal(result.messages.at(-1)[1],'error');

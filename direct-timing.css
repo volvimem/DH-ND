@@ -68,6 +68,14 @@
 #direct-timing-dialog button:hover:not(:disabled) { background: #eef4ff; }
 #direct-timing-dialog .direct-timing-table button:not(:disabled) { margin-top: 4px; border-color: #087143; background: #087143; color: #fff; }
 #direct-timing-dialog .direct-timing-table button:hover:not(:disabled) { background: #095b39; }
+#direct-timing-dialog .direct-timing-table button.direct-timing-dnf {
+    display: block;
+    margin-top: 4px;
+    border-color: #a91c2e;
+    background: #a91c2e;
+    color: #fff;
+}
+#direct-timing-dialog .direct-timing-table button.direct-timing-dnf:hover:not(:disabled) { background: #841523; }
 #direct-timing-dialog button:disabled { cursor: default; opacity: .55; }
 #direct-timing-dialog :focus-visible { outline: 3px solid #2563eb; outline-offset: 2px; }
 #direct-timing-help, #direct-timing-status { padding: 0 20px; font-size: .8125rem; line-height: 1.35; }

@@ -32,7 +32,39 @@
     entries.splice(rigidIndex === -1 ? entries.length : rigidIndex + 1, 0, {name:'ENDURO', active:true});
     return entries;
   }
-  root.DHNDCategories = Object.freeze({compareStartOrder, withEnduro});
+  function qualifyStartValue(value) {
+    if (value === Infinity || String(value ?? '').trim().toUpperCase() === 'DNF') return -Infinity;
+    if (typeof value === 'number') return Number.isFinite(value) && value >= 0 ? value : Infinity;
+    const parts = /^(\d+):([0-5]?\d)(?:[.,](\d{1,3}))?$/.exec(String(value ?? '').trim());
+    if (!parts) return Infinity;
+    return Number(parts[1]) * 60000 + Number(parts[2]) * 1000 + Number((parts[3] || '').padEnd(3, '0'));
+  }
+  function compareQualifyStart(left, right) {
+    const a = qualifyStartValue(left), b = qualifyStartValue(right);
+    if (a === b) return 0;
+    return a < b ? -1 : 1;
+  }
+  function qualifyResults(eventId, records, normalizeCategory) {
+    const event = String(eventId);
+    const keyOf = (cpf, cat) => JSON.stringify([
+      String(cpf ?? '').replace(/[.\s-]/g, ''),
+      baseCategory(normalizeCategory(String(cat ?? ''))).normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    ]);
+    const results = new Map();
+    for (const record of Object.values(records || {})) {
+      if (!record?.cpf || String(record.evtId) !== event || record.runType !== 'qualify') continue;
+      const value = String(record.status ?? '').trim().toUpperCase() === 'DNF' ? 'DNF' : record.val;
+      const ms = qualifyStartValue(value);
+      if (ms === Infinity) continue;
+      const key = keyOf(record.cpf, record.cat);
+      const existing = results.get(key);
+      if (!existing || (Number.isFinite(ms) && (existing.ms === -Infinity || ms < existing.ms))) {
+        results.set(key, {ms, value:ms === -Infinity ? 'DNF' : value});
+      }
+    }
+    return (cpf, cat) => results.get(keyOf(cpf, cat))?.value ?? '';
+  }
+  root.DHNDCategories = Object.freeze({compareStartOrder, withEnduro, compareQualifyStart, qualifyResults});
 
   const eventSealLabels = Object.freeze({PE:'FPC/PE', CBC:'CBC NACIONAL', NE:'NORDESTE', PB:'PARAÍBA'});
 

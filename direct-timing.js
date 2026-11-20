@@ -216,8 +216,8 @@
     }
 
     function syncDraft(context, row) {
-        if (row.saved || (!row.startTime && !row.finishTime)) context.drafts.delete(row.key);
-        else context.drafts.set(row.key, {start:row.startTime, finish:row.finishTime});
+        if (row.saved || (!row.startTime && !row.finishTime && !row.dnf)) context.drafts.delete(row.key);
+        else context.drafts.set(row.key, {start:row.startTime, finish:row.finishTime, ...(row.dnf && {dnf:true})});
         try {
             if (context.drafts.size) sessionStorage.setItem(context.draftKey, JSON.stringify(Object.fromEntries(context.drafts)));
             else sessionStorage.removeItem(context.draftKey);
@@ -252,8 +252,12 @@
         context.rows.delete(row.key);
     }
 
-    function preview(row) {
+    function preview(context, row) {
         if (row.saved || row.pending) return;
+        if (row.dnf) {
+            row.dnf = false;
+            syncDraft(context, row);
+        }
         row.output.textContent = '—';
         row.retry.hidden = true;
         setRowState(row, '');
@@ -261,8 +265,10 @@
 
     async function publish(context, row) {
         if (session !== context || row.saved || row.pending) return;
-        if (!row.startTime || !row.finishTime) return;
-        const calculation = policy.calculate(row.startTime.text, row.finishTime.text);
+        if (!row.dnf && (!row.startTime || !row.finishTime)) return;
+        const calculation = row.dnf
+            ? {val:'DNF', ...(row.startTime && {startClock:row.startTime.text})}
+            : policy.calculate(row.startTime.text, row.finishTime.text);
         if (!calculation) {
             setRowState(row, 'Confira as horas. A chegada precisa ser posterior à largada.');
             return;
@@ -281,16 +287,17 @@
             return;
         }
 
-        row.start.value = calculation.startClock;
-        row.finish.value = calculation.finishClock;
+        if (calculation.startClock) row.start.value = calculation.startClock;
+        if (calculation.finishClock) row.finish.value = calculation.finishClock;
         row.output.textContent = calculation.val;
         row.start.readOnly = true;
         row.finish.readOnly = true;
+        row.dnfButton.disabled = true;
         row.pending = true;
         row.retry.hidden = true;
         setRowState(row, 'Enviando…');
-        const generated = row.startTime.generated || row.finishTime.generated;
-        const record = {...athlete, ...calculation, status:'OK', ...(generated && {generatedMilliseconds:true})};
+        const generated = !row.dnf && (row.startTime.generated || row.finishTime.generated);
+        const record = {...athlete, ...calculation, status:row.dnf ? 'DNF' : 'OK', ...(generated && {generatedMilliseconds:true})};
 
         try {
             const ref = database.ref(context.root + '/tempos');
@@ -309,7 +316,7 @@
                     ? `${athlete.name}: ${timeLabel} publicado${confirmed.generatedMilliseconds ? ' · milésimos gerados' : ''}.`
                     : `${athlete.name} já tem resultado publicado: ${timeLabel}.`, 'success');
             } else {
-                setRowState(row, 'O tempo não foi confirmado. Confira a etapa e tente novamente.');
+                setRowState(row, 'O resultado não foi confirmado. Confira a etapa e tente novamente.');
             }
         } catch (error) {
             if (session === context && !row.saved) {
@@ -322,6 +329,7 @@
             if (session === context && !row.saved) {
                 row.start.readOnly = false;
                 row.finish.readOnly = false;
+                row.dnfButton.disabled = false;
                 row.retry.hidden = false;
             }
         }
@@ -341,16 +349,25 @@
         retry.type = 'button';
         retry.textContent = 'Tentar novamente';
         retry.hidden = true;
+        const dnfButton = document.createElement('button');
+        dnfButton.type = 'button';
+        dnfButton.className = 'direct-timing-dnf';
+        dnfButton.textContent = 'DNF';
+        dnfButton.setAttribute('aria-label', 'Registrar DNF · ' + athlete.name + ' · ' + athlete.cat);
         const resultCell = cell('Resultado', output);
-        resultCell.append(note, retry);
-        const row = {key, athlete, tr, start, finish, output, note, retry, query:simplify([athlete.num, athlete.name, athlete.cat].join(' '))};
+        resultCell.append(note, retry, dnfButton);
+        const row = {key, athlete, tr, start, finish, output, note, retry, dnfButton, query:simplify([athlete.num, athlete.name, athlete.cat].join(' '))};
         row.category = categoryKey(athlete.cat);
         const draft = context.drafts.get(key);
         row.startTime = restoreClock(draft?.start, 'start');
         row.finishTime = restoreClock(draft?.finish, 'finish');
+        row.dnf = draft?.dnf === true;
         start.value = row.startTime?.text || '';
         finish.value = row.finishTime?.text || '';
-        if (row.startTime && row.finishTime) {
+        if (row.dnf) {
+            output.textContent = 'DNF';
+            retry.hidden = false;
+        } else if (row.startTime && row.finishTime) {
             output.textContent = policy.calculate(start.value, finish.value)?.val || '—';
             retry.hidden = false;
         }
@@ -365,10 +382,10 @@
                 if (clock) field.value = clock.text;
                 syncDraft(context, row);
                 filterRows();
-                void publish(context, row);
+                if (!row.dnf) void publish(context, row);
                 if (!clock && field.value.trim()) setRowState(row, 'Digite o horário completo.');
             };
-            field.addEventListener('input', () => preview(row));
+            field.addEventListener('input', () => preview(context, row));
             field.addEventListener('change', commit);
             field.addEventListener('keydown', event => {
                 if (event.key === 'Tab') commit();
@@ -381,6 +398,16 @@
             });
         }
         retry.addEventListener('click', () => void publish(context, row));
+        dnfButton.addEventListener('click', () => {
+            if (session !== context || row.saved || row.pending) return;
+            row.startTime = policy.completeClock(start.value, 'start', row.startTime, row.finishTime) || row.startTime;
+            if (row.startTime) start.value = row.startTime.text;
+            row.dnf = true;
+            output.textContent = 'DNF';
+            syncDraft(context, row);
+            filterRows();
+            void publish(context, row);
+        });
         tr.append(cell('Placa', athlete.num || '—'), cell('Atleta', athlete.name), cell('Categoria', athlete.cat),
             cell('Hora de largada', start), cell('Hora de chegada', finish), resultCell);
         return row;
@@ -398,8 +425,16 @@
             row.tr.hidden = !row.startTime && (!row.query.includes(query) || (category.value && row.category !== category.value));
             if (!row.startTime) waiting.push(row);
         }
-        waiting.sort(({athlete:a}, {athlete:b}) => window.DHNDCategories.compareStartOrder(a.cat, b.cat) ||
-            comparator.compare(a.num || '\uffff', b.num || '\uffff') || comparator.compare(a.name, b.name));
+        const {compareStartOrder, compareQualifyStart} = window.DHNDCategories;
+        const qualify = session.qualifyResultFor;
+        waiting.sort(({athlete:a}, {athlete:b}) => {
+            const categoryOrder = compareStartOrder(a.cat, b.cat);
+            if (categoryOrder) return categoryOrder;
+            const nameOrder = comparator.compare(a.name, b.name);
+            const plateOrder = comparator.compare(a.num || '\uffff', b.num || '\uffff');
+            return qualify ? compareQualifyStart(qualify(a.cpf, a.cat), qualify(b.cpf, b.cat)) || nameOrder || plateOrder
+                : plateOrder || nameOrder;
+        });
         for (const [container, list] of [[runningRows, inProgress], [rows, waiting]]) {
             list.forEach((row, index) => {
                 if (container.children[index] !== row.tr) container.insertBefore(row.tr, container.children[index] || null);
@@ -448,6 +483,9 @@
         }
         const athletes = athletesFor(context);
         context.athleteCount = athletes.size;
+        if (context.runType === '1st') {
+            context.qualifyResultFor = window.DHNDCategories.qualifyResults(context.eventId, db.tempos, window.normalizeCatName);
+        }
         refreshCategories(context, athletes);
         for (const [key, row] of context.rows) {
             if (!athletes.has(key)) {

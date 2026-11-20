@@ -34,7 +34,7 @@
     
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" media="print" onload="this.media='all'">
     <link rel="stylesheet" href="style.css?v=161">
-    <link rel="stylesheet" href="direct-timing.css?v=3"> 
+    <link rel="stylesheet" href="direct-timing.css?v=4">
 </head>
 <body>
 <div id="dhnd-startup" role="status"><strong>DH-ND</strong><span>Abrindo o app…</span></div>
@@ -225,7 +225,6 @@
                 <div class="filter-row" style="margin-top:5px; display:grid; grid-template-columns: 1fr 1fr; gap:5px;">
                     <select id="filter-region-tempos" aria-label="Classificação ou estado do atleta" onchange="this.dataset.preferredRegion = this.value; renderContent('tempos')" style="font-size:11px; padding:8px; background:#fff3e0; border-color:#ffa000; color:#e65100; font-weight:bold;">
                         <option value="NORDESTE">RANKING NORDESTE (GERAL)</option>
-                        <option value="PE">PERNAMBUCO (FPC)</option>
                         <optgroup id="filter-states-tempos" label="ESTADOS DOS ATLETAS" hidden></optgroup>
                     </select>
                     <select id="filter-evt-tempos" onchange="renderContent('tempos')" style="font-size:11px; padding:8px;"><option value="ALL">ETAPAS</option></select>
@@ -250,7 +249,6 @@
                 <div class="filter-row" style="margin-top:5px; display:flex; flex-direction:column; gap:5px;">
                     <select id="filter-region-ranking" aria-label="Classificação ou estado do atleta" onchange="this.dataset.preferredRegion = this.value; renderContent('ranking')" style="padding:10px; font-size:12px; font-weight:900; background:#fff3e0; border:2px solid #ffa000; color:#e65100; border-radius:6px;">
                         <option value="NORDESTE">🌎 RANKING NORDESTE</option>
-                        <option value="PE">🏆 PERNAMBUCO (FPC)</option>
                         <optgroup id="filter-states-ranking" label="ESTADOS DOS ATLETAS" hidden></optgroup>
                     </select>
                     <div style="display:flex; gap:5px;">
@@ -1362,6 +1360,14 @@ refreshListsOnly();
         ul.innerHTML = list.map((a, i) => `<li><span class="rank-pos">${i+1}</span><div class="rank-info"><span class="rank-name">${a.name} <span style="font-size:0.7em; color:#888;">${a.city}</span></span><span class="rank-cat">${a.category}</span></div><div class="rank-time-box"><span class="rank-time ${colorClass}">${msToTime(a.times[runType])}</span></div></li>`).join('');
     }
 
+    function compareLiveStart(a, b, source) {
+        const left = a.times?.[source] ?? null, right = b.times?.[source] ?? null;
+        const order = source === 'qualify'
+            ? window.opener.DHNDCategories.compareQualifyStart(left, right)
+            : source === 'oficial' && left !== right ? right - left : 0;
+        return order || a.name.localeCompare(b.name, 'pt-BR');
+    }
+
     function renderStartQueue() {
         const tbody = document.getElementById('startQueueBody'); const runType = document.getElementById('runType').value;
         let sourceTimeKey = runType === 'oficial' ? 'qualify' : (runType === 'segunda' ? 'oficial' : null);
@@ -1370,19 +1376,7 @@ refreshListsOnly();
         catsToShow.forEach(cat => {
             let qualified = athletes.filter(a => a.category === cat);
             if (runType === 'segunda') qualified = qualified.filter(a => a.times && a.times.oficial !== null);
-            // NOVA ORDENAÇÃO CORRIGIDA COM PROTEÇÃO MATEMÁTICA CONTRA DNF
-            qualified.sort((a, b) => {
-                let tA = (sourceTimeKey && a.times && a.times[sourceTimeKey] !== null) ? a.times[sourceTimeKey] : 99999999;
-                let tB = (sourceTimeKey && b.times && b.times[sourceTimeKey] !== null) ? b.times[sourceTimeKey] : 99999999;
-                
-                // Evita que (Infinito - Infinito = NaN) quebre a fila de atletas
-                if (tA === Infinity && tB === Infinity) return a.name.localeCompare(b.name);
-                if (tA === Infinity) return -1; // Quem não tem tempo (DNF) é "mais lento", então larga primeiro
-                if (tB === Infinity) return 1;
-
-                if (tA !== 99999999 || tB !== 99999999) return tB - tA; 
-                return a.name.localeCompare(b.name); 
-            });
+            qualified.sort((a, b) => compareLiveStart(a, b, sourceTimeKey));
 
             if (qualified.length > 0) {
                 let visibleList = qualified.filter(a => !a.times || a.times[runType] === null || a.isRerun);
@@ -1638,12 +1632,7 @@ refreshListsOnly();
             let qualified = athletes.filter(a => a.category === cat);
             if (runType === 'segunda') qualified = qualified.filter(a => a.times && a.times.oficial !== null);
 
-            qualified.sort((a, b) => {
-                let tA = (sourceTimeKey && a.times && a.times[sourceTimeKey] !== null) ? a.times[sourceTimeKey] : 99999999;
-                let tB = (sourceTimeKey && b.times && b.times[sourceTimeKey] !== null) ? b.times[sourceTimeKey] : 99999999;
-                if (tA !== 99999999 || tB !== 99999999) return tB - tA;
-                return a.name.localeCompare(b.name);
-            });
+            qualified.sort((a, b) => compareLiveStart(a, b, sourceTimeKey));
 
             let visibleList = qualified.filter(a => !a.times || a.times[runType] === null || a.isRerun);
 
@@ -1725,12 +1714,12 @@ refreshListsOnly();
 <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-messaging-compat.js"></script>
 
 <script src="season-policy.js?v=1"></script>
-<script src="ranking-policy.js?v=4"></script>
+<script src="ranking-policy.js?v=5"></script>
 <script src="maintenance.js?v=5"></script>
 <script src="maintenance-admin.js?v=1"></script>
 <script src="roster-policy.js?v=1"></script>
-<script src="script.js?v=178"></script>
-<script src="direct-timing.js?v=3"></script>
+<script src="script.js?v=179"></script>
+<script src="direct-timing.js?v=4"></script>
 
 </body>
 </html>
