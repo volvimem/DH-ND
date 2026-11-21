@@ -75,13 +75,12 @@
             <div class="input-group">
                 <label id="login-pass-label" for="login-pass" style="color: white; text-shadow: 0 1px 2px rgba(0,0,0,0.5);">SENHA</label>
                 <div class="input-wrapper" style="position:relative">
-                    <input type="password" id="login-pass" autocomplete="current-password" placeholder="••••" style="padding-right:40px;">
+                    <input type="password" id="login-pass" autocomplete="current-password" placeholder="Senha ou código temporário" style="padding-right:40px;">
                     <i class="fas fa-eye pass-eye" onclick="togglePass('login-pass')"></i>
                 </div>
             </div>
             
-            <button type="button" id="login-method-toggle" hidden aria-pressed="false" style="align-self:flex-start; background:transparent; color:white; border:0; padding:6px 0; margin-bottom:8px; text-decoration:underline; cursor:pointer;">Usar código temporário de atleta</button>
-            <p id="login-code-help" aria-live="polite" hidden style="color:white; margin:0 0 12px;">Se recebeu um código, selecione “Usar código temporário de atleta” e digite o CPF para o qual ele foi gerado.</p>
+            <p id="login-code-help" aria-live="polite" hidden style="color:white; margin:0 0 12px;">Se estiver usando um código temporário, confira o CPF do atleta e a validade do código.</p>
             <div style="width:100%; text-align:left; margin-bottom:10px; display:flex; align-items:center; gap:8px;">
                 <input type="checkbox" id="login-remember" style="width:auto; transform:scale(1.2);">
                 <label for="login-remember" style="color:white; margin:0; font-size:12px; cursor:pointer; text-shadow:0 1px 2px rgba(0,0,0,0.5);">MANTER CONECTADO</label>
@@ -869,7 +868,7 @@
 <div class="modal-overlay" id="modal-recovery">
     <div class="modal-box">
         <h3 style="color:var(--pe-blue)">RECUPERAR ACESSO</h3>
-        <p style="margin:14px 0;">Atleta: escolha “Usar código temporário de atleta” e informe o CPF para o qual o suporte gerou o código. Ele vale 5 minutos e só pode ser usado uma vez. Para recuperar uma conta administrativa, fale com o responsável pelo sistema.</p>
+        <p style="margin:14px 0;">Informe o CPF do atleta e digite o código temporário no campo Senha. Toque em Acessar conta para criar sua nova senha. O código vale 5 minutos e só pode ser usado uma vez. Para recuperar uma conta administrativa, fale com o responsável pelo sistema.</p>
         <a id="rec-support" class="header-support-btn" target="_blank" rel="noopener noreferrer"><i class="fab fa-whatsapp"></i> FALAR COM O SUPORTE</a>
         <button class="btn" style="background:#ccc; color:#333; margin-top:10px;" onclick="fecharModal('modal-recovery')">FECHAR</button>
     </div>
@@ -1729,7 +1728,7 @@ refreshListsOnly();
 <script src="maintenance-admin.js?v=1"></script>
 <script src="roster-policy.js?v=1"></script>
 <script src="script.js?v=183"></script>
-<script src="login-recovery-ui.js?v=1"></script>
+<script src="login-recovery-ui.js?v=2"></script>
 <script src="direct-timing.js?v=5"></script>
 
 </body>
