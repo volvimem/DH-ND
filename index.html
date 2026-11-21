@@ -72,13 +72,18 @@
                 <label style="color: white; text-shadow: 0 1px 2px rgba(0,0,0,0.5);">CPF</label>
                 <div class="input-wrapper"><input type="tel" id="login-cpf" placeholder="000.000.000-00" oninput="mascaraCPF(this);" maxlength="14"></div>
             </div>
-            <div class="input-group">
-                <label style="color: white; text-shadow: 0 1px 2px rgba(0,0,0,0.5);">SENHA</label>
+            <div class="input-group" id="login-password-group">
+                <label for="login-pass" style="color: white; text-shadow: 0 1px 2px rgba(0,0,0,0.5);">SENHA</label>
                 <div class="input-wrapper" style="position:relative">
                     <input type="password" id="login-pass" placeholder="••••" style="padding-right:40px;">
                     <i class="fas fa-eye pass-eye" onclick="togglePass('login-pass')"></i>
                 </div>
             </div>
+            <div class="input-group" id="login-code-group" hidden>
+                <label for="login-code" style="color:white; text-shadow:0 1px 2px rgba(0,0,0,0.5);">CÓDIGO TEMPORÁRIO</label>
+                <input id="login-code" type="text" inputmode="numeric" autocomplete="one-time-code" enterkeyhint="go" maxlength="6" pattern="[0-9]{6}" placeholder="Digite os 6 dígitos" oninput="this.value = this.value.replace(/\D/g, '').slice(0, 6)" onkeydown="if (event.key === 'Enter') { event.preventDefault(); fazerLogin(); }">
+            </div>
+            <button id="btn-login-code-mode" type="button" onclick="alternarLoginPorCodigo()" aria-controls="login-password-group login-code-group" aria-pressed="false" style="background:none; border:0; color:white; font:inherit; text-decoration:underline; cursor:pointer; min-height:38px; align-self:flex-start; margin-bottom:8px;">Usar código temporário</button>
             
             <div style="width:100%; text-align:left; margin-bottom:10px; display:flex; align-items:center; gap:8px;">
                 <input type="checkbox" id="login-remember" style="width:auto; transform:scale(1.2);">
@@ -867,7 +872,7 @@
 <div class="modal-overlay" id="modal-recovery">
     <div class="modal-box">
         <h3 style="color:var(--pe-blue)">RECUPERAR ACESSO</h3>
-        <p style="margin:14px 0;">Peça um código temporário ao suporte. Use o código no campo Senha da tela de login. Em seguida, o app vai pedir que você crie uma nova senha.</p>
+        <p style="margin:14px 0;">Peça um código temporário ao suporte. Na tela de login, toque em Usar código temporário e digite os 6 dígitos para criar uma nova senha.</p>
         <a id="rec-support" class="header-support-btn" target="_blank" rel="noopener noreferrer"><i class="fab fa-whatsapp"></i> FALAR COM O SUPORTE</a>
         <button class="btn" style="background:#ccc; color:#333; margin-top:10px;" onclick="fecharModal('modal-recovery')">FECHAR</button>
     </div>
@@ -906,7 +911,7 @@
         <div style="border-top:1px dashed #ccc; padding-top:10px; margin-bottom:15px; text-align: center;">
             <b style="font-size:10px; color:#0038a8; display:block; margin-bottom:10px; text-transform: uppercase;">Acesso de Emergência</b>
             <button class="btn" style="background: #ffe500; color: #000; font-weight: 900; box-shadow: 0 4px 6px rgba(0,0,0,0.1); width: 100%; margin-bottom: 5px; margin-top:0;" id="btn-issue-athlete-temp-login" onclick="gerarSenhaTemporaria()">GERAR CÓDIGO TEMPORÁRIO (5 MIN)</button>
-            <p style="margin:6px 0;">Envie o código ao atleta para usar no campo Senha.</p>
+            <p style="margin:6px 0;">Envie os 6 dígitos ao atleta. Na tela de login, ele deve tocar em Usar código temporário.</p>
             <div id="super-edit-temp-pass-display" style="font-size: 14px; font-family: monospace; font-weight: bold; color: #d50000; margin-top: 5px; min-height: 20px; user-select:all; overflow-wrap:anywhere;" aria-live="polite"></div>
         </div>
 
@@ -1726,7 +1731,7 @@ refreshListsOnly();
 <script src="maintenance.js?v=5"></script>
 <script src="maintenance-admin.js?v=1"></script>
 <script src="roster-policy.js?v=1"></script>
-<script src="script.js?v=181"></script>
+<script src="script.js?v=182"></script>
 <script src="direct-timing.js?v=5"></script>
 
 </body>

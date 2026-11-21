@@ -559,7 +559,7 @@ function setupAutoSave() {
     elements.forEach(el => {
         if(!el.id) return;
         const ignoreList = ['login-cpf', 'login-pass', 'cad-nome', 'cad-cpf', 'cad-tel', 'cad-city', 'cad-uf', 'cad-gender', 'cad-nasc', 'cad-cat-override', 'cad-sec-a', 'cad-pass', 'adm-pass-check', 'prof-current-pass', 'prof-new-pass', 'backup-input-file', 'adm-res-idx-edit', 'adm-res-id', 'adm-evt-id-edit', 'adm-org-selected-cpf', 'super-edit-old-cpf', 'adm-edit-user-search', 'adm-cfg-search', 'adm-org-search', 'cad-cbc', 'prof-edit-cbc', 'super-edit-cbc'];
-        if(ignoreList.includes(el.id)) return;
+        if(ignoreList.includes(el.id) || el.id === 'login-code') return;
         const savedVal = localStorage.getItem('autosave_' + el.id);
         if(savedVal !== null) { if(el.type === 'checkbox') el.checked = (savedVal === 'true'); else el.value = savedVal; }
     
@@ -1760,13 +1760,33 @@ if (input.type === "password") { input.type = "text"; icon.classList.remove("fa-
 // ==========================================================
 let loginInProgress = false;
 let verifiedLoginIdentity = null;
+let loginUsesTemporaryCode = false;
+
+function setTemporaryLoginMode(enabled) {
+    loginUsesTemporaryCode = enabled;
+    document.getElementById('login-pass').value = '';
+    const codeInput = document.getElementById('login-code');
+    if (!codeInput) return;
+    document.getElementById('login-password-group').hidden = enabled;
+    document.getElementById('login-code-group').hidden = !enabled;
+    codeInput.value = '';
+    const button = document.getElementById('btn-login-code-mode');
+    button.textContent = enabled ? 'Voltar para a senha' : 'Usar código temporário';
+    button.setAttribute('aria-pressed', String(enabled));
+}
+
+window.alternarLoginPorCodigo = function() {
+    if (loginInProgress) return;
+    setTemporaryLoginMode(!loginUsesTemporaryCode);
+    document.getElementById(loginUsesTemporaryCode ? 'login-code' : 'login-pass').focus();
+};
 
 let temporaryPasswordSetup = null;
 let temporaryPasswordSaving = false;
 
 function openTemporaryPasswordSetup(recovery) {
     temporaryPasswordSetup = recovery;
-    document.getElementById('login-pass').value = '';
+    setTemporaryLoginMode(false);
     trocarTela('password-setup');
     document.getElementById('setup-new-pass').focus();
 }
@@ -1847,13 +1867,19 @@ window.fazerLogin = async function() {
     if (loginInProgress) return false;
 
     const cpf = cleanCPF(document.getElementById('login-cpf').value);
-    const password = document.getElementById('login-pass').value;
+    const useCode = loginUsesTemporaryCode;
+    const password = useCode ? '' : document.getElementById('login-pass').value;
+    const code = useCode ? document.getElementById('login-code').value.trim() : password.trim();
     const remember = document.getElementById('login-remember').checked;
     if (!/^\d{11}$/.test(cpf)) {
         toast('INFORME UM CPF COM 11 DÍGITOS.', 'error');
         return false;
     }
-    if (!password) {
+    if (useCode && !/^\d{6}$/.test(code)) {
+        toast('INFORME OS 6 DÍGITOS DO CÓDIGO TEMPORÁRIO.', 'error');
+        return false;
+    }
+    if (!useCode && !password) {
         toast('INFORME SUA SENHA.', 'error');
         return false;
     }
@@ -1901,8 +1927,7 @@ window.fazerLogin = async function() {
     if (button) button.disabled = true;
     try {
         if (!auth) return reportAuthError({code:'auth/configuration-not-found'});
-        const code = password.trim();
-        if (/^DHND-[A-Za-z0-9_-]{22}$/.test(code)) {
+        if (useCode || /^DHND-[A-Za-z0-9_-]{22}$/.test(code)) {
             try {
                 const redeem = firebase.app().functions('us-central1').httpsCallable('redeemAthleteTemporaryLogin');
                 const {data} = await redeem({cpf, code});
@@ -1912,17 +1937,20 @@ window.fazerLogin = async function() {
                 openTemporaryPasswordSetup({cpf, remember, resetCode:data.resetCode, uid:data.uid});
                 return true;
             } catch (error) {
-                try {
-                    await auth.signInWithEmailAndPassword(cpf + '@dhpe.com.br', password);
-                } catch (passwordError) {
-                    if (!credentialError(passwordError)) return reportAuthError(passwordError);
-                    toast(error?.code === 'functions/permission-denied'
-                        ? 'CÓDIGO INVÁLIDO, EXPIRADO OU JÁ USADO. PEÇA OUTRO AO SUPORTE.'
-                        : 'NÃO FOI POSSÍVEL VALIDAR O CÓDIGO TEMPORÁRIO. TENTE NOVAMENTE OU FALE COM O SUPORTE.', 'error');
-                    return false;
+                if (!useCode) {
+                    try {
+                        await auth.signInWithEmailAndPassword(cpf + '@dhpe.com.br', password);
+                        return await finishLogin(cpf, remember);
+                    } catch (passwordError) {
+                        if (!credentialError(passwordError)) return reportAuthError(passwordError);
+                    }
                 }
+                const invalid = ['functions/permission-denied', 'functions/resource-exhausted'].includes(error?.code);
+                toast(invalid
+                    ? 'CONFIRA O CÓDIGO. SE ELE EXPIROU, JÁ FOI USADO OU ATINGIU O LIMITE DE TENTATIVAS, PEÇA OUTRO.'
+                    : 'NÃO FOI POSSÍVEL VALIDAR O CÓDIGO TEMPORÁRIO. TENTE NOVAMENTE OU FALE COM O SUPORTE.', 'error');
+                return false;
             }
-            return await finishLogin(cpf, remember);
         }
         toast('AUTENTICANDO...', 'info');
         const email = cpf + '@dhpe.com.br';
@@ -5771,9 +5799,11 @@ window.gerarSenhaTemporaria = async function() {
     display.textContent = '';
     try {
         const issue = firebase.app().functions('us-central1').httpsCallable('issueAthleteTemporaryLogin');
-        const {data} = await issue({cpf});
+        const supportsPin = !!document.getElementById('login-code');
+        const {data} = await issue(supportsPin ? {cpf, format:'pin'} : {cpf});
         if (getAuthenticatedProfileAccount(loggedUser) !== account || cleanCPF(selection.value) !== cpf) return;
-        if (!/^DHND-[A-Za-z0-9_-]{22}$/.test(data?.code || '')) throw new Error('Código temporário inválido');
+        const format = supportsPin ? /^\d{6}$/ : /^DHND-[A-Za-z0-9_-]{22}$/;
+        if (typeof data?.code !== 'string' || !format.test(data.code)) throw new Error('Código temporário inválido');
         display.textContent = data.code;
         toast('CÓDIGO TEMPORÁRIO GERADO. VÁLIDO POR 5 MINUTOS PARA UM ACESSO.');
     } catch (error) {
