@@ -97,6 +97,23 @@
         </div>
     </div>
     
+    <div id="screen-password-setup" class="screen">
+        <form onsubmit="salvarNovaSenhaTemporaria(); return false;" aria-labelledby="password-setup-title" style="width:100%; max-width:460px; margin:22px auto; padding:20px;">
+            <h2 id="password-setup-title" style="color:var(--pe-blue); margin:0 0 12px;">CRIE SUA NOVA SENHA</h2>
+            <p style="margin:0 0 20px;">Para concluir o acesso, escolha uma senha com pelo menos 6 caracteres.</p>
+            <div class="input-group">
+                <label for="setup-new-pass">NOVA SENHA</label>
+                <input id="setup-new-pass" type="password" minlength="6" autocomplete="new-password" required>
+            </div>
+            <div class="input-group">
+                <label for="setup-confirm-pass">CONFIRME A NOVA SENHA</label>
+                <input id="setup-confirm-pass" type="password" minlength="6" autocomplete="new-password" required>
+            </div>
+            <button class="btn" type="submit" id="btn-save-password-setup">SALVAR NOVA SENHA</button>
+            <button class="btn" type="button" onclick="cancelarNovaSenhaTemporaria()" style="background:#e2e8f0; color:#1e293b; margin-top:10px;">VOLTAR AO LOGIN</button>
+        </form>
+    </div>
+
     <div id="screen-cadastro" class="screen">
         <div style="padding:15px; background:white; border-bottom:1px solid #eee; display:flex; align-items:center; gap:10px">
             <i class="fas fa-arrow-left" onclick="trocarTela('login')" style="font-size:18px; color:#333; cursor:pointer"></i>
@@ -356,10 +373,13 @@
             
             <div style="background:white; padding:15px; border-radius:10px; margin:0 15px 20px 15px; border:1px dashed #ccc;">
                 <b style="font-size:12px; color:var(--pe-blue);">ALTERAR MINHA SENHA</b>
-                <div class="input-group" style="margin-top:10px;">
-                    <input type="password" id="prof-new-pass" placeholder="Nova Senha (Mín. 6 dígitos)">
+                <div id="prof-current-pass-row" hidden>
+                    <input type="password" id="prof-current-pass" autocomplete="current-password" aria-label="Senha atual" placeholder="Confirme sua senha atual" style="margin-top:10px;">
                 </div>
-                <button class="btn" style="background:#333; margin-top:5px; padding:10px;" onclick="mudarSenhaPerfil()">ATUALIZAR SENHA</button>
+                <div class="input-group" style="margin-top:10px;">
+                    <input type="password" id="prof-new-pass" autocomplete="new-password" aria-label="Nova senha" placeholder="Nova senha (mín. 6 caracteres)">
+                </div>
+                <button class="btn" style="background:#333; margin-top:5px; padding:10px;" id="btn-update-profile-password" onclick="mudarSenhaPerfil()">ATUALIZAR SENHA</button>
             </div>
 
         </div>
@@ -847,22 +867,8 @@
 <div class="modal-overlay" id="modal-recovery">
     <div class="modal-box">
         <h3 style="color:var(--pe-blue)">RECUPERAR ACESSO</h3>
-        <input type="tel" id="rec-cpf" placeholder="SEU CPF" class="input-field" oninput="mascaraCPF(this)" maxlength="14" style="margin-top:10px;">
-        <button class="btn" style="background:#333;" onclick="buscarUsuarioRecuperacao()">BUSCAR CADASTRO</button>
-        
-        <div id="rec-security-area" style="display:none; margin-top:15px; border-top:1px solid #eee; padding-top:10px;">
-            <p style="font-size:11px; color:#666; margin-bottom:5px;">Confirme sua palavra-chave cadastrada:</p>
-            <input id="rec-answer" placeholder="Resposta Secreta" class="uppercase-input input-field">
-            <button class="btn" style="background:var(--pe-blue)" onclick="revelarSenha()">VERIFICAR</button>
-        </div>
-        
-        <div id="rec-change-pass-area" style="display:none; margin-top:15px; background:#f0fdf4; padding:15px; border-radius:8px; border:1px solid #bbf7d0;">
-            <p id="rec-show-pass" style="color:#15803d; font-weight:bold; font-size:16px; margin-bottom:15px; letter-spacing:2px;"></p>
-            <p style="font-size:10px; color:#666; margin-bottom:5px;">Você pode manter esta senha ou digitar uma nova abaixo:</p>
-            <input type="password" id="rec-new-pass" placeholder="Nova Senha (Mín 6 dígitos)" class="input-field">
-            <button class="btn" style="background:var(--pe-green)" onclick="mudarSenhaRecuperacao()">SALVAR E ENTRAR</button>
-        </div>
-        
+        <p style="margin:14px 0;">Peça um código temporário ao suporte. Use o código no campo Senha da tela de login. Em seguida, o app vai pedir que você crie uma nova senha.</p>
+        <a id="rec-support" class="header-support-btn" target="_blank" rel="noopener noreferrer"><i class="fab fa-whatsapp"></i> FALAR COM O SUPORTE</a>
         <button class="btn" style="background:#ccc; color:#333; margin-top:10px;" onclick="fecharModal('modal-recovery')">FECHAR</button>
     </div>
 </div>
@@ -899,8 +905,9 @@
         
         <div style="border-top:1px dashed #ccc; padding-top:10px; margin-bottom:15px; text-align: center;">
             <b style="font-size:10px; color:#0038a8; display:block; margin-bottom:10px; text-transform: uppercase;">Acesso de Emergência</b>
-            <button class="btn" style="background: #ffe500; color: #000; font-weight: 900; box-shadow: 0 4px 6px rgba(0,0,0,0.1); width: 100%; margin-bottom: 5px; margin-top:0;" onclick="gerarSenhaTemporaria()">GERAR SENHA TEMP. (5 MIN)</button>
-            <div id="super-edit-temp-pass-display" style="font-size: 14px; font-family: monospace; font-weight: bold; color: #d50000; margin-top: 5px; min-height: 20px;"></div>
+            <button class="btn" style="background: #ffe500; color: #000; font-weight: 900; box-shadow: 0 4px 6px rgba(0,0,0,0.1); width: 100%; margin-bottom: 5px; margin-top:0;" id="btn-issue-athlete-temp-login" onclick="gerarSenhaTemporaria()">GERAR CÓDIGO TEMPORÁRIO (5 MIN)</button>
+            <p style="margin:6px 0;">Envie o código ao atleta para usar no campo Senha.</p>
+            <div id="super-edit-temp-pass-display" style="font-size: 14px; font-family: monospace; font-weight: bold; color: #d50000; margin-top: 5px; min-height: 20px; user-select:all; overflow-wrap:anywhere;" aria-live="polite"></div>
         </div>
 
         <button class="btn" onclick="saveSuperEdit()" style="background: #0038a8; color: white; width: 100%; margin-bottom: 10px; font-weight: bold; margin-top:0;">SALVAR DADOS DO ATLETA</button>
@@ -1709,6 +1716,7 @@ refreshListsOnly();
 
 <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-functions-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-database-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-storage-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-messaging-compat.js"></script>
@@ -1718,7 +1726,7 @@ refreshListsOnly();
 <script src="maintenance.js?v=5"></script>
 <script src="maintenance-admin.js?v=1"></script>
 <script src="roster-policy.js?v=1"></script>
-<script src="script.js?v=179"></script>
+<script src="script.js?v=181"></script>
 <script src="direct-timing.js?v=5"></script>
 
 </body>

@@ -392,7 +392,14 @@ window.baixarImagem = function(elementId, fileName) {
 };
 
 function openModal(id){ const el=document.getElementById(id); if(el) el.style.display='flex'; }
-function fecharModal(id){ const el=document.getElementById(id); if(el) el.style.display='none'; }
+function fecharModal(id) {
+    const modal = document.getElementById(id);
+    if (modal) modal.style.display = 'none';
+    if (id === 'modal-super-edit') {
+        document.getElementById('super-edit-old-cpf').value = '';
+        document.getElementById('super-edit-temp-pass-display').textContent = '';
+    }
+}
 
 // ==========================================================
 // 3. FUNÇÕES GERAIS E BANCO DE DADOS
@@ -551,7 +558,7 @@ function setupAutoSave() {
     const elements = document.querySelectorAll('input:not([type="password"]):not([type="file"]), select, textarea');
     elements.forEach(el => {
         if(!el.id) return;
-        const ignoreList = ['login-cpf', 'login-pass', 'cad-nome', 'cad-cpf', 'cad-tel', 'cad-city', 'cad-uf', 'cad-gender', 'cad-nasc', 'cad-cat-override', 'cad-sec-a', 'cad-pass', 'adm-pass-check', 'rec-cpf', 'rec-answer', 'rec-new-pass', 'prof-new-pass', 'backup-input-file', 'adm-res-idx-edit', 'adm-res-id', 'adm-evt-id-edit', 'adm-org-selected-cpf', 'super-edit-old-cpf', 'adm-edit-user-search', 'adm-cfg-search', 'adm-org-search', 'cad-cbc', 'prof-edit-cbc', 'super-edit-cbc'];
+        const ignoreList = ['login-cpf', 'login-pass', 'cad-nome', 'cad-cpf', 'cad-tel', 'cad-city', 'cad-uf', 'cad-gender', 'cad-nasc', 'cad-cat-override', 'cad-sec-a', 'cad-pass', 'adm-pass-check', 'prof-current-pass', 'prof-new-pass', 'backup-input-file', 'adm-res-idx-edit', 'adm-res-id', 'adm-evt-id-edit', 'adm-org-selected-cpf', 'super-edit-old-cpf', 'adm-edit-user-search', 'adm-cfg-search', 'adm-org-search', 'cad-cbc', 'prof-edit-cbc', 'super-edit-cbc'];
         if(ignoreList.includes(el.id)) return;
         const savedVal = localStorage.getItem('autosave_' + el.id);
         if(savedVal !== null) { if(el.type === 'checkbox') el.checked = (savedVal === 'true'); else el.value = savedVal; }
@@ -1738,10 +1745,13 @@ document.addEventListener("DOMContentLoaded", function() {
     // ==========================================================
 });
 function trocarTela(id) {
-if (!maintenanceAllowsApp() && !(window.dhndMaintenance.state.loginRequested && id === 'login')) return;
+if (!maintenanceAllowsApp() && !(window.dhndMaintenance.state.loginRequested && ['login', 'password-setup'].includes(id))) return;
 document.querySelectorAll('.screen').forEach(e => e.classList.remove('active')); const tela = document.getElementById('screen-' + id); if(tela) tela.classList.add('active'); const nav = document.getElementById('main-nav-bar');
 const head = document.getElementById('main-app-header'); if(id === 'app') { if(nav) nav.style.display='flex'; if(head) head.style.display='flex'; } else { if(nav) nav.style.display='none'; if(head) head.style.display='none'; } }
-function mostrarLoginInicial() { document.getElementById('lbl-season-year').innerText = SYSTEM_YEAR; trocarTela('login'); }
+function mostrarLoginInicial() {
+    document.getElementById('lbl-season-year').innerText = SYSTEM_YEAR;
+    trocarTela(temporaryPasswordSetup ? 'password-setup' : 'login');
+}
 window.togglePass = function(id) { const input = document.getElementById(id); const icon = input.nextElementSibling;
 if (input.type === "password") { input.type = "text"; icon.classList.remove("fa-eye"); icon.classList.add("fa-eye-slash"); } else { input.type = "password"; icon.classList.remove("fa-eye-slash"); icon.classList.add("fa-eye"); } };
 
@@ -1749,6 +1759,89 @@ if (input.type === "password") { input.type = "text"; icon.classList.remove("fa-
 // 7. SISTEMA DE LOGIN, CADASTRO E CONTAS
 // ==========================================================
 let loginInProgress = false;
+let verifiedLoginIdentity = null;
+
+let temporaryPasswordSetup = null;
+let temporaryPasswordSaving = false;
+
+function openTemporaryPasswordSetup(recovery) {
+    temporaryPasswordSetup = recovery;
+    document.getElementById('login-pass').value = '';
+    trocarTela('password-setup');
+    document.getElementById('setup-new-pass').focus();
+}
+
+function clearTemporaryPasswordSetup() {
+    temporaryPasswordSetup = null;
+    document.getElementById('setup-new-pass').value = '';
+    document.getElementById('setup-confirm-pass').value = '';
+}
+
+window.cancelarNovaSenhaTemporaria = function() {
+    if (temporaryPasswordSaving) return;
+    clearTemporaryPasswordSetup();
+    mostrarLoginInicial();
+};
+
+window.salvarNovaSenhaTemporaria = async function() {
+    if (!temporaryPasswordSetup || temporaryPasswordSaving) return false;
+    const {cpf, remember, resetCode, uid} = temporaryPasswordSetup;
+    const password = document.getElementById('setup-new-pass').value;
+    const confirmation = document.getElementById('setup-confirm-pass').value;
+    if (password.length < 6) {
+        toast('ESCOLHA UMA SENHA COM NO MÍNIMO 6 CARACTERES.', 'error');
+        return false;
+    }
+    if (password !== confirmation) {
+        toast('AS SENHAS NÃO COINCIDEM. CONFIRA OS DOIS CAMPOS.', 'error');
+        return false;
+    }
+    const button = document.getElementById('btn-save-password-setup');
+    temporaryPasswordSaving = true;
+    button.disabled = true;
+    button.textContent = 'SALVANDO...';
+    try {
+        await auth.confirmPasswordReset(resetCode, password);
+        clearTemporaryPasswordSetup();
+        try {
+            const credential = await auth.signInWithEmailAndPassword(cpf + '@dhpe.com.br', password);
+            if (credential.user?.uid !== uid) {
+                if (credential.user?.uid && auth.currentUser?.uid === credential.user.uid) await auth.signOut();
+            } else if (await finishLogin(cpf, remember)) {
+                toast('NOVA SENHA SALVA COM SUCESSO!');
+                return true;
+            }
+        } catch (_) {
+            // A troca já foi confirmada. O atleta pode entrar com a nova senha.
+        }
+        mostrarLoginInicial();
+        toast('SENHA SALVA. ENTRE COM A NOVA SENHA PARA ACESSAR O APP.');
+        return false;
+    } catch (error) {
+        switch (error?.code) {
+            case 'auth/invalid-action-code':
+            case 'auth/expired-action-code':
+            case 'auth/user-disabled':
+            case 'auth/user-not-found':
+                clearTemporaryPasswordSetup();
+                mostrarLoginInicial();
+                toast('O ACESSO TEMPORÁRIO PERDEU A VALIDADE. PEÇA OUTRO CÓDIGO AO SUPORTE.', 'error');
+                break;
+            case 'auth/weak-password':
+            case 'auth/password-does-not-meet-requirements':
+                toast('A SENHA NÃO ATENDE AOS REQUISITOS. ESCOLHA OUTRA SENHA.', 'error');
+                break;
+            default:
+                toast('NÃO FOI POSSÍVEL CONFIRMAR A TROCA. VERIFIQUE A INTERNET E TENTE NOVAMENTE.', 'error');
+        }
+        return false;
+    } finally {
+        temporaryPasswordSaving = false;
+        button.disabled = false;
+        button.textContent = 'SALVAR NOVA SENHA';
+    }
+};
+
 
 window.fazerLogin = async function() {
     if (loginInProgress) return false;
@@ -1807,19 +1900,30 @@ window.fazerLogin = async function() {
     loginInProgress = true;
     if (button) button.disabled = true;
     try {
-        if (localUser?.tempPass === password) {
-            if (Date.now() > localUser.tempPassExp) {
-                toast('SENHA TEMPORÁRIA EXPIRADA.', 'error');
-                return false;
-            }
-            await executeLogin(localUser, remember);
-            return true;
-        }
-        if (!auth && legacyPasswordMatches) {
-            await executeLogin(localUser, remember);
-            return true;
-        }
         if (!auth) return reportAuthError({code:'auth/configuration-not-found'});
+        const code = password.trim();
+        if (/^DHND-[A-Za-z0-9_-]{22}$/.test(code)) {
+            try {
+                const redeem = firebase.app().functions('us-central1').httpsCallable('redeemAthleteTemporaryLogin');
+                const {data} = await redeem({cpf, code});
+                if (typeof data?.resetCode !== 'string' || !data.resetCode || typeof data.uid !== 'string' || !data.uid) {
+                    throw new Error('Resposta de acesso temporário inválida');
+                }
+                openTemporaryPasswordSetup({cpf, remember, resetCode:data.resetCode, uid:data.uid});
+                return true;
+            } catch (error) {
+                try {
+                    await auth.signInWithEmailAndPassword(cpf + '@dhpe.com.br', password);
+                } catch (passwordError) {
+                    if (!credentialError(passwordError)) return reportAuthError(passwordError);
+                    toast(error?.code === 'functions/permission-denied'
+                        ? 'CÓDIGO INVÁLIDO, EXPIRADO OU JÁ USADO. PEÇA OUTRO AO SUPORTE.'
+                        : 'NÃO FOI POSSÍVEL VALIDAR O CÓDIGO TEMPORÁRIO. TENTE NOVAMENTE OU FALE COM O SUPORTE.', 'error');
+                    return false;
+                }
+            }
+            return await finishLogin(cpf, remember);
+        }
         toast('AUTENTICANDO...', 'info');
         const email = cpf + '@dhpe.com.br';
         const authPassword = password.padEnd(6, '0');
@@ -1906,6 +2010,7 @@ async function finishLogin(cpfClean, remember, isRestoring = false) {
         return false;
     }
     if (!sameSession()) return false;
+    verifiedLoginIdentity = {cpf:cpfClean, uid};
     executeLogin(result.user, remember, isRestoring);
     return true;
 }
@@ -1939,6 +2044,7 @@ window.fazerLogout = async function() {
         for (const key of [SESS_KEY, LAST_TAB_KEY, LAST_ADM_KEY]) localStorage.removeItem(key);
     } catch (_) {}
     loggedUser = null;
+    verifiedLoginIdentity = null;
     maintenanceSavedSession = null;
     maintenanceRestoringUser = null;
     window.dhndMaintenance?.beginLogin(false);
@@ -1987,33 +2093,9 @@ window.cadastrar = async function() {
     }
 };
 
-window.abrirModalRecovery = function() { document.getElementById('rec-cpf').value = ''; document.getElementById('rec-answer').value = ''; document.getElementById('rec-new-pass').value = ''; document.getElementById('rec-security-area').style.display = 'none'; document.getElementById('rec-change-pass-area').style.display = 'none';
-openModal('modal-recovery'); };
-window.buscarUsuarioRecuperacao = function() { const cpfRaw = document.getElementById('rec-cpf').value; const user = db.users.find(u => cleanCPF(u.cpf) === cleanCPF(cpfRaw));
-if(user) { document.getElementById('rec-security-area').style.display='block'; document.getElementById('rec-change-pass-area').style.display='none'; toast("USUÁRIO ENCONTRADO"); } else { toast("CPF NÃO ENCONTRADO", "error"); } };
-window.revelarSenha = function() { const cpfRaw = document.getElementById('rec-cpf').value; const ans = document.getElementById('rec-answer').value.toUpperCase(); const user = db.users.find(u => cleanCPF(u.cpf) === cleanCPF(cpfRaw));
-if(user && user.secA === ans) { document.getElementById('rec-security-area').style.display = 'none'; document.getElementById('rec-change-pass-area').style.display = 'block'; toast("RESPOSTA CORRETA!", "success");
-} else { showConfirm("ERRO DE SEGURANÇA", "Resposta Incorreta. Tente novamente.", '<i class="fas fa-times-circle" style="color:#d50000"></i>', null); } };
-window.mudarSenhaRecuperacao = async function() {
-    const cpfRaw = document.getElementById('rec-cpf').value; const clean = cleanCPF(cpfRaw);
-    const user = db.users.find(u => cleanCPF(u.cpf) === clean); const newPass = document.getElementById('rec-new-pass').value;
-    if(newPass.length > 0 && newPass.length < 6) return toast("A nova senha deve ter no mínimo 6 dígitos", "error");
-    if (newPass.length >= 6 && (!auth?.currentUser || String(auth.currentUser.email || "").toLowerCase() !== clean + "@dhpe.com.br")) {
-        return toast("PARA RECUPERAR O ACESSO, FALE COM O SUPORTE DA TELA DE LOGIN.", "error");
-    }
-    if(newPass.length >= 6) {
-        const emailFake = clean + "@dhpe.com.br"; toast("ATUALIZANDO SENHA...", "info");
-        const salvarLocal = async () => { const idx = db.users.findIndex(u => cleanCPF(u.cpf) === clean);
-        if(idx === -1) return false;
-        db.users[idx].pass = newPass; db.users[idx].tempPass = null; db.users[idx].adminNewPass = null;
-        if (!await saveDB('users')) return false;
-        toast("SENHA ALTERADA COM SUCESSO!"); fecharModal('modal-recovery');
-        return true;
-        };
-        if (!await salvarLocal()) return;
-        if(auth) { const authPass = newPass.padEnd(6, '0'); auth.signInWithEmailAndPassword(emailFake, user.pass || 'default123').then(() => { auth.currentUser.updatePassword(authPass).catch(()=>{}); }).catch((e) => { if (e.code === 'auth/user-not-found') { auth.createUserWithEmailAndPassword(emailFake, authPass).catch(()=>{}); } });
-        }
-    } else { toast("Nenhuma alteração feita. Você pode logar."); fecharModal('modal-recovery'); }
+window.abrirModalRecovery = function() {
+    document.getElementById('rec-support').href = document.getElementById('btn-support-login').href;
+    openModal('modal-recovery');
 };
 function initApp(isRestoring = false) {
     if (!maintenanceAllowsApp()) { window.dhndMaintenance.refreshIdentity(); return; }
@@ -2189,11 +2271,76 @@ window.salvarFullProfile = async function() {
     toast('DADOS SALVOS!');
 };
 
-window.mudarSenhaPerfil = async function() { const novaSenha = document.getElementById('prof-new-pass').value;
-if(novaSenha.length < 6) return toast("A SENHA DEVE TER NO MÍNIMO 6 DÍGITOS", "error");
-const idx = db.users.findIndex(u => cleanCPF(u.cpf) === cleanCPF(loggedUser.cpf)); if(idx > -1) { db.users[idx].adminNewPass = null; db.users[idx].tempPass = null;
-db.users[idx].tempPassExp = null; db.users[idx].pass = novaSenha; if (!await saveDB('users')) return; updateSessionStorage(); } toast("SENHA ATUALIZADA COM SUCESSO!"); document.getElementById('prof-new-pass').value = '';
-if(auth && auth.currentUser) { auth.currentUser.updatePassword(novaSenha.padEnd(6, '0')).catch(()=>{}); } };
+function getAuthenticatedProfileAccount(profile) {
+    const account = auth?.currentUser;
+    const cpf = cleanCPF(profile?.cpf);
+    const uid = profile?.uid || (verifiedLoginIdentity?.cpf === cpf && verifiedLoginIdentity.uid);
+    if (!uid || account?.uid !== uid || account.email?.toLowerCase() !== cpf + '@dhpe.com.br') return null;
+    return account;
+}
+
+let profilePasswordSaving = false;
+window.mudarSenhaPerfil = async function() {
+    if (profilePasswordSaving) return;
+
+    const profile = loggedUser;
+    const account = getAuthenticatedProfileAccount(profile);
+    if (!account) return toast('ENTRE NOVAMENTE NA SUA CONTA PARA ALTERAR A SENHA.', 'error');
+
+    const currentPass = document.getElementById('prof-current-pass');
+    const currentPassRow = document.getElementById('prof-current-pass-row');
+    const newPass = document.getElementById('prof-new-pass');
+    const button = document.getElementById('btn-update-profile-password');
+    const password = newPass.value;
+    if (password.length < 6) return toast('A NOVA SENHA DEVE TER NO MÍNIMO 6 CARACTERES.', 'error');
+    if (!currentPassRow.hidden && !currentPass.value) {
+        currentPass.focus();
+        return toast('DIGITE A SENHA ATUAL PARA CONFIRMAR.', 'error');
+    }
+
+    profilePasswordSaving = true;
+    button.disabled = true;
+    try {
+        if (!currentPassRow.hidden) {
+            const credential = firebase.auth.EmailAuthProvider.credential(account.email, currentPass.value.padEnd(6, '0'));
+            await account.reauthenticateWithCredential(credential);
+            if (getAuthenticatedProfileAccount(loggedUser) !== account) {
+                return toast('SUA SESSÃO MUDOU. ENTRE NOVAMENTE PARA ALTERAR A SENHA.', 'error');
+            }
+        }
+        await account.updatePassword(password);
+        currentPass.value = '';
+        currentPassRow.hidden = true;
+        newPass.value = '';
+        toast('SENHA ATUALIZADA COM SUCESSO!');
+    } catch (error) {
+        switch (error?.code) {
+            case 'auth/requires-recent-login':
+                currentPassRow.hidden = false;
+                currentPass.focus();
+                toast('CONFIRME A SENHA ATUAL. SE ENTROU COM UM CÓDIGO TEMPORÁRIO QUE JÁ EXPIROU, PEÇA UM NOVO.', 'error');
+                break;
+            case 'auth/wrong-password':
+            case 'auth/invalid-credential':
+            case 'auth/invalid-login-credentials':
+                toast('SENHA ATUAL INCORRETA. CONFIRA OU FALE COM O SUPORTE.', 'error');
+                break;
+            case 'auth/weak-password':
+            case 'auth/password-does-not-meet-requirements':
+                toast('A SENHA NÃO ATENDE AOS REQUISITOS. ESCOLHA OUTRA SENHA.', 'error');
+                break;
+            case 'auth/network-request-failed':
+            case 'auth/timeout':
+                toast('NÃO FOI POSSÍVEL CONFIRMAR A TROCA. VERIFIQUE A INTERNET.', 'error');
+                break;
+            default:
+                toast('NÃO FOI POSSÍVEL ALTERAR A SENHA. ENTRE NOVAMENTE OU FALE COM O SUPORTE.', 'error');
+        }
+    } finally {
+        button.disabled = false;
+        profilePasswordSaving = false;
+    }
+};
 
 window.uploadSelfie = function(input) {
     if (!loggedUser || !input.files?.[0]) return;
@@ -5393,9 +5540,27 @@ window.salvarPixX1 = function() {
     toast("PIX DO X1 SALVO COM SUCESSO!", "success");
 };
 
-window.checkAdmPass = function() { const inputPass = document.getElementById('adm-pass-check').value;
-if(loggedUser && inputPass === (loggedUser.pass || "admin123") && (loggedUser.role === 'ADMIN' || loggedUser.role === 'ORGANIZER' || isSuperAdmin(loggedUser))) { document.getElementById('adm-login-box').style.display='none'; document.getElementById('adm-panel-real').style.display='block';
-applyAdminPermissions(); backToAdmMenu(); document.getElementById('adm-pass-check').value = ''; } else { toast("SENHA INCORRETA OU ACESSO NEGADO", "error"); } };
+window.checkAdmPass = async function() {
+    const profile = loggedUser;
+    const account = getAuthenticatedProfileAccount(profile);
+    if (!account || !(isSuperAdmin(profile) || profile.role === 'ADMIN' || profile.role === 'ORGANIZER')) {
+        return toast('SENHA INCORRETA OU ACESSO NEGADO', 'error');
+    }
+    const input = document.getElementById('adm-pass-check');
+    if (!input.value) return toast('INFORME SUA SENHA.', 'error');
+    try {
+        const credential = firebase.auth.EmailAuthProvider.credential(account.email, input.value.padEnd(6, '0'));
+        await account.reauthenticateWithCredential(credential);
+        if (loggedUser !== profile || getAuthenticatedProfileAccount(profile) !== account) return;
+        input.value = '';
+        document.getElementById('adm-login-box').style.display = 'none';
+        document.getElementById('adm-panel-real').style.display = 'block';
+        applyAdminPermissions();
+        backToAdmMenu();
+    } catch (_) {
+        toast('NÃO FOI POSSÍVEL CONFIRMAR A SENHA DO PAINEL. CONFIRA A SENHA E A CONEXÃO.', 'error');
+    }
+};
 window.backToAdmMenu = function() { openAdmSection('menu'); };
 
 function filterPilots(ctx, force) { 
@@ -5559,6 +5724,7 @@ window.openEditUserModal = function(cpf){
         document.getElementById('super-edit-name').value = u.nome; document.getElementById('super-edit-cpf').value = u.cpf; document.getElementById('super-edit-city').value = u.city; document.getElementById('super-edit-uf').value = u.uf || "PE"; document.getElementById('super-edit-tel').value = u.tel;
         document.getElementById('super-edit-nasc').value = u.nasc || ""; if(document.getElementById('super-edit-cbc')) document.getElementById('super-edit-cbc').value = u.cbc || ""; const newPassInput = document.getElementById('super-edit-new-pass'); if(newPassInput) newPassInput.value = "";
         const catSelect = document.getElementById('super-edit-cat'); const allCats = db.config.categories.filter(c => c.active).sort((a, b) => comparePublicCategories(a.name, b.name)); catSelect.innerHTML = allCats.map(c => `<option value="${c.name}">${c.name}</option>`).join('');
+        document.getElementById('super-edit-temp-pass-display').textContent = '';
         catSelect.value = u.cat; openModal('modal-super-edit'); 
     } 
 };
@@ -5587,11 +5753,36 @@ window.saveSuperEdit = async function() {
 };
 
 window.gerarSenhaTemporaria = async function() {
-    if(!isSuperAdmin(loggedUser)) return; const oldCpf = document.getElementById('super-edit-old-cpf').value;
-    const idx = db.users.findIndex(x => x.cpf === oldCpf);
-    if(idx > -1) { const pin = Math.floor(100000 + Math.random() * 900000).toString();
-    db.users[idx].tempPass = pin; db.users[idx].tempPassExp = Date.now() + (5 * 60 * 1000); if (!await saveDB('users')) return; const tempDisplay = document.getElementById('super-edit-temp-pass-display');
-    if(tempDisplay) tempDisplay.innerText = `SENHA: ${pin}`; toast("SENHA TEMPORÁRIA GERADA!"); } else { toast("Usuário não encontrado.", "error"); }
+    const account = getAuthenticatedProfileAccount(loggedUser);
+    if (!isSuperAdmin(loggedUser) || !account) {
+        return toast('ENTRE NOVAMENTE COMO ADMINISTRADOR PARA GERAR UM CÓDIGO.', 'error');
+    }
+
+    const selection = document.getElementById('super-edit-old-cpf');
+    const display = document.getElementById('super-edit-temp-pass-display');
+    const button = document.getElementById('btn-issue-athlete-temp-login');
+    const cpf = cleanCPF(selection.value);
+    if (!/^\d{11}$/.test(cpf) || !db.users.some(user => cleanCPF(user.cpf) === cpf)) {
+        return toast('CADASTRO DO ATLETA NÃO ENCONTRADO.', 'error');
+    }
+    if (button.disabled) return;
+
+    button.disabled = true;
+    display.textContent = '';
+    try {
+        const issue = firebase.app().functions('us-central1').httpsCallable('issueAthleteTemporaryLogin');
+        const {data} = await issue({cpf});
+        if (getAuthenticatedProfileAccount(loggedUser) !== account || cleanCPF(selection.value) !== cpf) return;
+        if (!/^DHND-[A-Za-z0-9_-]{22}$/.test(data?.code || '')) throw new Error('Código temporário inválido');
+        display.textContent = data.code;
+        toast('CÓDIGO TEMPORÁRIO GERADO. VÁLIDO POR 5 MINUTOS PARA UM ACESSO.');
+    } catch (error) {
+        toast(error?.code === 'functions/failed-precondition'
+            ? 'O CÓDIGO ESTÁ DISPONÍVEL PARA ATLETAS COM CONTA ATIVA VINCULADA AO CPF.'
+            : 'NÃO FOI POSSÍVEL GERAR O CÓDIGO TEMPORÁRIO. TENTE NOVAMENTE OU FALE COM O SUPORTE.', 'error');
+    } finally {
+        button.disabled = false;
+    }
 };
 
 window.toggleFiliacaoPE = function(cpf) {

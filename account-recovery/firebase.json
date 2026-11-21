@@ -1,0 +1,9 @@
+{
+  "functions": [
+    {
+      "source": ".",
+      "codebase": "athlete-password-recovery",
+      "ignore": ["node_modules", ".git", ".env", ".env.*", "*.test.js", "firebase-debug.log", "firebase-debug.*.log", "*.local"]
+    }
+  ]
+}
