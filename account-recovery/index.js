@@ -3,6 +3,7 @@ const {getAuth} = require('firebase-admin/auth');
 const {getDatabase, getDatabaseWithUrl} = require('firebase-admin/database');
 const {defineString} = require('firebase-functions/params');
 const {HttpsError, onCall} = require('firebase-functions/v2/https');
+const {warn} = require('firebase-functions/logger');
 const {createRecoveryHandlers} = require('./temporary-login');
 
 const app = initializeApp();
@@ -16,6 +17,7 @@ const handlers = createRecoveryHandlers({
     },
     getAdminUid: () => recoveryAdminUid.value(),
     HttpsError,
+    reportFailure: details => warn('Falha no serviço de recuperação.', details),
 });
 
 const options = {serviceAccount: recoveryServiceAccount};
