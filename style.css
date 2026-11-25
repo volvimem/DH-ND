@@ -8,8 +8,8 @@
     --bg-body: #f0f2f5;
     --text-main: #1e293b;
     --bg-card: white;
-    --sat: env(safe-area-inset-top);
-    --sab: env(safe-area-inset-bottom);
+    --sat: env(safe-area-inset-top, 0px);
+    --sab: env(safe-area-inset-bottom, 0px);
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Poppins', sans-serif; -webkit-tap-highlight-color: transparent; outline: none; }
@@ -17,7 +17,11 @@
 
 html, body { 
     width: 100%; height: 100%; overflow-x: hidden; 
-    background: var(--bg-body); position: fixed; 
+    background: var(--bg-body);
+}
+
+@media screen {
+    body { height: 100dvh; overflow: hidden; }
 }
 
 .app-container { 
@@ -28,6 +32,7 @@ html, body {
     -webkit-overflow-scrolling: touch;
     display: flex; flex-direction: column;
     padding-top: var(--sat);
+    padding-inline: env(safe-area-inset-left, 0px) env(safe-area-inset-right, 0px);
 }
 
 /* Inputs & Forms */
@@ -49,6 +54,23 @@ input:focus { border-color: var(--pe-blue); }
 /* Screens & Layout */
 .screen { display: none; flex-direction: column; animation: fade 0.3s; padding-bottom: calc(80px + var(--sab)); width: 100%; min-height: 100%; }
 .screen.active { display: flex; }
+
+@media screen {
+    #screen-app {
+        flex: 1;
+        min-height: 0;
+        padding-bottom: 0;
+        animation: none;
+    }
+
+    #screen-app > .c-sec {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        overscroll-behavior-y: contain;
+        padding-bottom: 16px;
+    }
+}
 .section-header-area { background: white; padding: 10px 15px; border-bottom: 1px solid #eee; margin-bottom: 10px; display: flex; flex-direction: column; gap: 10px; }
 .section-title { font-size: 14px; color: var(--pe-blue); font-weight: 900; display: flex; align-items: center; gap: 8px; border-left: 5px solid var(--pe-yellow); padding-left: 10px; }
 .filter-row { display: flex; gap: 5px; }
@@ -62,14 +84,14 @@ input:focus { border-color: var(--pe-blue); }
 .login-season-text { color: #ffe500 !important; font-weight: 900 !important; font-size: 14px; display: block; margin-bottom: 15px;}
 
 /* Header & Bottom Bar */
-.app-header { background: white; padding: 10px 15px; display: none; justify-content: space-between; align-items: center; border-bottom: 1px solid #eee; position: sticky; top: 0; z-index: 500; height: 65px; flex-shrink: 0; }
+.app-header { background: white; padding: 10px 15px; display: none; justify-content: space-between; align-items: center; border-bottom: 1px solid #eee; position: relative; z-index: 500; height: 65px; flex-shrink: 0; }
 .header-support-btn { background-color: #25D366; color: white; padding: 6px 12px; border-radius: 20px; font-size: 10px; font-weight: 900; text-decoration: none; display: flex; align-items: center; gap: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); cursor: pointer; }
 .version-badge { font-size: 10px; font-weight: 900; color: var(--pe-blue); background: #e0e7ff; padding: 6px 10px; border-radius: 20px; border: 1px solid var(--pe-blue); cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center;}
 .season-selector-ui { font-size: 8px; font-weight: bold; background: transparent; border: none; color: var(--pe-blue); text-align: center; padding: 0; margin-top: 2px; appearance: none; -webkit-appearance: none; cursor: pointer; outline: none;}
 .header-logo-text { font-size: 18px; font-weight: 900; color: var(--pe-blue); letter-spacing: -1px; display: flex; align-items: center; gap: 10px; }
 .header-mini-logo { height: 65px; width: auto; max-width: 150px; object-fit: contain; filter: drop-shadow(0 0 1.5px rgba(255, 255, 255, 0.9)); }
 
-.bottom-bar { position: fixed; bottom: 0; left: 50%; transform: translateX(-50%); width: 100%; max-width: 600px; height: 60px; background: white; display: none; justify-content: space-around; align-items: center; border-top: 1px solid #ddd; z-index: 10000; box-shadow: 0 -5px 15px rgba(0,0,0,0.05); padding-bottom: var(--sab); }
+.bottom-bar { position: relative; flex: none; width: 100%; height: calc(60px + var(--sab)); background: white; display: none; justify-content: space-around; align-items: center; border-top: 1px solid #ddd; z-index: 10000; box-shadow: 0 -5px 15px rgba(0,0,0,0.05); padding-bottom: var(--sab); }
 .bar-item { flex: 1; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #94a3b8; font-size: 10px; font-weight: 700; cursor: pointer; background: white; }
 .bar-item.active { color: var(--pe-blue); background: #f0f9ff; border-top: 3px solid var(--pe-red); }
 
