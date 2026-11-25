@@ -35,6 +35,14 @@ html, body {
     padding-inline: env(safe-area-inset-left, 0px) env(safe-area-inset-right, 0px);
 }
 
+/* Reserva para as barras de status e de navegação por três botões em modo retrato. */
+@media screen and (orientation: portrait) {
+    html[data-android-system-bars] .app-container {
+        --sat: max(32px, env(safe-area-inset-top, 0px));
+        --sab: max(48px, env(safe-area-inset-bottom, 0px));
+    }
+}
+
 /* Inputs & Forms */
 input.cpf-valid { border-color: #009b3a !important; background-color: #f0fdf4 !important; border-width: 3px !important; }
 input.cpf-invalid { border-color: #d50000 !important; background-color: #fef2f2 !important; border-width: 3px !important; }
