@@ -33,22 +33,67 @@
     <link rel="apple-touch-icon" href="logo.png?v=16">
     
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" media="print" onload="this.media='all'">
-    <link rel="stylesheet" href="style.css?v=163">
+    <link rel="stylesheet" href="style.css?v=164" id="app-stylesheet">
     <script>
         (() => {
-            if (!/Android/i.test(navigator.userAgent)) return;
-            const installed = matchMedia('(display-mode: standalone), (display-mode: minimal-ui)');
-            const embedded = /; wv\)/i.test(navigator.userAgent) || document.referrer.startsWith('android-app://');
+            if (!(navigator.userAgentData?.platform === 'Android' || /Android/i.test(navigator.userAgent))) return;
 
-            function updateSystemBars() {
-                // Alguns apps Android desenham sob as barras do sistema e informam inset zero.
-                const fillsScreen = Math.abs(window.innerHeight - window.screen.height) <= 2;
-                document.documentElement.toggleAttribute('data-android-system-bars', (installed.matches || embedded) && fillsScreen);
+            const root = document.documentElement;
+            const appMode = matchMedia('(display-mode: standalone), (display-mode: minimal-ui), (display-mode: fullscreen)');
+            const embedded = /; wv\)/i.test(navigator.userAgent) || document.referrer.startsWith('android-app://');
+            const viewport = window.visualViewport;
+            const preference = 'dhnd-extra-system-bar-space';
+            const isInstalled = () => appMode.matches || embedded;
+            const storage = () => isInstalled() ? window.localStorage : window.sessionStorage;
+            let extra = false;
+
+            function updateViewport() {
+                const useMargins = isInstalled() || extra;
+                root.toggleAttribute('data-android-system-bars', useMargins);
+                root.toggleAttribute('data-extra-system-bars', extra);
+                if (useMargins && viewport && viewport.height > 0 && Math.abs(viewport.scale - 1) < 0.01) {
+                    root.style.setProperty('--app-visible-height', viewport.height + 'px');
+                } else {
+                    root.style.removeProperty('--app-visible-height');
+                }
             }
 
-            updateSystemBars();
-            window.addEventListener('pageshow', updateSystemBars);
-            window.addEventListener('resize', updateSystemBars);
+            function updateControls() {
+                const version = new URL(document.getElementById('app-stylesheet').href).searchParams.get('v');
+                for (const panel of document.querySelectorAll('.screen-adjustment')) {
+                    panel.querySelector('input').checked = extra;
+                    panel.querySelector('small').textContent = 'Tela ' + version + ' · ' + (isInstalled() ? 'App' : 'Navegador');
+                }
+            }
+
+            function restorePreference() {
+                try { extra = storage().getItem(preference) === '1'; } catch (_) { /* Mantém a escolha em memória. */ }
+                updateViewport();
+                updateControls();
+            }
+
+            restorePreference();
+            appMode.addEventListener('change', restorePreference);
+            window.addEventListener('pageshow', restorePreference);
+            window.addEventListener('resize', updateViewport);
+            viewport?.addEventListener('resize', updateViewport);
+
+            document.addEventListener('DOMContentLoaded', () => {
+                const template = document.getElementById('screen-adjustment-template');
+                for (const tab of ['calendar', 'tempos', 'ranking', 'profile']) {
+                    const title = document.querySelector('#cont-' + tab + ' .section-title');
+                    if (!title) continue;
+                    const panel = template.content.firstElementChild.cloneNode(true);
+                    panel.querySelector('input').addEventListener('change', event => {
+                        extra = event.target.checked;
+                        try { storage().setItem(preference, extra ? '1' : '0'); } catch (_) { /* Mantém a escolha em memória. */ }
+                        updateViewport();
+                        updateControls();
+                    });
+                    title.after(panel);
+                }
+                updateControls();
+            });
         })();
     </script>
     <link rel="stylesheet" href="direct-timing.css?v=5">
@@ -75,6 +120,14 @@
         </div>
     </div>
 </div>
+
+<template id="screen-adjustment-template">
+    <details class="screen-adjustment">
+        <summary>Ajustar tela</summary>
+        <label><input type="checkbox"> Aumentar as margens do topo e do menu</label>
+        <small></small>
+    </details>
+</template>
 
 <div class="app-container" id="main-app-container">
     
