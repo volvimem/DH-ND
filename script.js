@@ -1949,7 +1949,10 @@ window.fazerLogin = async function() {
                     openTemporaryPasswordSetup({cpf, remember, resetCode:data.resetCode, uid:data.uid});
                     return true;
                 } catch (recoveryError) {
-                    if (recoveryError?.code === 'functions/permission-denied') return reportAuthError(error);
+                    if (recoveryError?.code === 'functions/permission-denied') {
+                        toast('CPF, SENHA OU CÓDIGO INVÁLIDOS. O CÓDIGO TEMPORÁRIO É VÁLIDO POR 5 MINUTOS E SÓ PODE SER USADO UMA VEZ.', 'error');
+                        return false;
+                    }
                     toast(recoveryError?.code === 'functions/resource-exhausted'
                         ? 'AGUARDE UM POUCO E TENTE O CÓDIGO NOVAMENTE.'
                         : 'NÃO FOI POSSÍVEL VALIDAR O CÓDIGO TEMPORÁRIO. VERIFIQUE A CONEXÃO E TENTE NOVAMENTE.', 'error');
@@ -1996,20 +1999,49 @@ function matchesRegistrationSession(account, cpf) {
         String(current.email || '').toLowerCase() === email;
 }
 
-async function requestRegistrationAction(action, cpf, account) {
+async function sendRegistrationAction(action, cpf, account, forceRefresh = false) {
     if (!matchesRegistrationSession(account, cpf)) return false;
-    const callable = firebase.app().functions('us-central1').httpsCallable('issueAthleteTemporaryLogin', {timeout: 12000});
+    // The app still uses Web SDK 9.6.1; use the documented callable protocol
+    // with the existing signed-in user's token rather than the old Functions SDK.
+    const token = await awaitWithTimeout(account.getIdToken(forceRefresh), 8000, 'functions/unauthenticated', 'Sessão não confirmada');
+    if (!matchesRegistrationSession(account, cpf)) return false;
+    if (typeof token !== 'string' || !token) throw Object.assign(new Error('Sessão não confirmada'), {code:'functions/unauthenticated'});
+    const url = 'https://us-central1-' + firebaseConfig.projectId + '.cloudfunctions.net/issueAthleteTemporaryLogin';
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15000);
     try {
-        const {data} = await callable({action, cpf});
-        return matchesRegistrationSession(account, cpf) && data?.allowed === true;
+        const response = await fetch(url, {
+            method:'POST', headers:{'Content-Type':'application/json', Authorization:'Bearer ' + token},
+            body:JSON.stringify({data:{action, cpf}}), credentials:'omit', cache:'no-store',
+            redirect:'error', referrerPolicy:'no-referrer', signal:controller.signal
+        });
+        const payload = await response.json();
+        if (payload?.error?.status) {
+            const code = String(payload.error.status).toLowerCase().replaceAll('_', '-');
+            throw Object.assign(new Error('Verificação de cadastro recusada'), {code:'functions/' + code});
+        }
+        const data = payload?.result ?? payload?.data;
+        const field = action === 'registration-finish' ? 'completed' : 'allowed';
+        if (!response.ok || typeof data?.[field] !== 'boolean') {
+            throw Object.assign(new Error('Resposta de cadastro inválida'), {code:'functions/internal'});
+        }
+        return matchesRegistrationSession(account, cpf) && data[field] === true;
+    } catch (error) {
+        if (typeof error?.code === 'string' && error.code.startsWith('functions/')) throw error;
+        throw Object.assign(new Error('Serviço de cadastro indisponível'), {code:error?.name === 'AbortError' ? 'functions/deadline-exceeded' : 'functions/unavailable'});
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+async function requestRegistrationAction(action, cpf, account) {
+    try {
+        return await sendRegistrationAction(action, cpf, account);
     } catch (error) {
         // Only retry the read-only status check, retaining the same authenticated account.
         const retryable = ['functions/unauthenticated', 'functions/unavailable', 'functions/deadline-exceeded', 'functions/internal'].includes(error?.code);
         if (action !== 'registration-status' || !retryable || !matchesRegistrationSession(account, cpf)) throw error;
-        await account.getIdToken(true);
-        if (!matchesRegistrationSession(account, cpf)) return false;
-        const {data} = await callable({action, cpf});
-        return matchesRegistrationSession(account, cpf) && data?.allowed === true;
+        return sendRegistrationAction(action, cpf, account, true);
     }
 }
 
@@ -2066,7 +2098,9 @@ async function offerPendingRegistration(cpf, account) {
     try {
         if (!await authorizeRegistration(cpf, account)) return false;
         if (!await waitForRegistrationPolicy(cpf, account)) throw Object.assign(new Error('Cadastro temporariamente indisponível'), {code:'registration/policy'});
-        document.getElementById('cad-cpf').value = cpf.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4');
+        const cpfField = document.getElementById('cad-cpf');
+        if (!cpfField) throw Object.assign(new Error('Formulário de cadastro indisponível'), {code:'registration/form'});
+        cpfField.value = cpf.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4');
         for (const id of ['login-pass', 'cad-pass', 'cad-pass-confirm']) {
             const input = document.getElementById(id);
             if (input) input.value = '';
@@ -2143,7 +2177,8 @@ async function finishLogin(cpfClean, remember, isRestoring = false) {
                 if (!sameSession()) return false;
                 const messages = {
                     'registration/archive':'LOGIN VALIDADO. VOLTE À TEMPORADA ATUAL PARA CONCLUIR SEU CADASTRO. [CAD-ANO]',
-                    'registration/policy':'LOGIN VALIDADO. CADASTRO TEMPORARIAMENTE INDISPONÍVEL. AGUARDE E TENTE NOVAMENTE. [CAD-PAUSA]'
+                    'registration/policy':'LOGIN VALIDADO. CADASTRO TEMPORARIAMENTE INDISPONÍVEL. AGUARDE E TENTE NOVAMENTE. [CAD-PAUSA]',
+                    'registration/form':'LOGIN VALIDADO. ATUALIZE O APLICATIVO PARA ABRIR O CADASTRO. [CAD-TELA]'
                 };
                 toast(messages[error?.code] || 'LOGIN VALIDADO. NÃO FOI POSSÍVEL VERIFICAR O CADASTRO AGORA. TENTE NOVAMENTE. [CAD-SERVIÇO]', 'error');
                 return false;

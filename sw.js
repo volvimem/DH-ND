@@ -114,7 +114,7 @@ self.addEventListener("notificationclick", (event) => {
 // ==========================================================
 // PARTE 2: PWA E CACHE
 // ==========================================================
-const CACHE_NAME = 'dhnd-registration-resume-20261127-v185';
+const CACHE_NAME = 'dhnd-registration-transport-20261127-v186';
 const APP_SCOPE = new URL(self.registration.scope);
 const STATIC_CACHE_PREFIX = `dhnd-official-static:${APP_SCOPE.href}:`;
 const STATIC_CACHE = STATIC_CACHE_PREFIX + CACHE_NAME;
