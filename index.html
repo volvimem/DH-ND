@@ -33,7 +33,7 @@
     <link rel="apple-touch-icon" href="icons/dh-nordeste-192.png?v=17">
     
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" media="print" onload="this.media='all'">
-    <link rel="stylesheet" href="style.css?v=165">
+    <link rel="stylesheet" href="style.css?v=166">
     <script defer src="mobile-navigation.js?v=1"></script>
     <link rel="stylesheet" href="direct-timing.css?v=5">
 </head>
@@ -65,7 +65,7 @@
     <div id="screen-login" class="screen">
         <div class="login-overlay-layer"></div>
         <div class="login-content-layer">
-            <img src="logo.png?v=17" decoding="async" fetchpriority="low" class="login-logo-img" alt="DH Nordeste">
+            <img src="logo-login.png?v=1" width="160" height="160" decoding="async" fetchpriority="high" class="login-logo-img" alt="Downhill Nordeste">
             <h1>CAMPEONATO NORDESTE DE DOWNHILL</h1>
             <span class="login-season-text">TEMPORADA <span id="lbl-season-year">...</span></span>
         
@@ -118,7 +118,7 @@
 
     <div id="screen-cadastro" class="screen">
         <div style="padding:15px; background:white; border-bottom:1px solid #eee; display:flex; align-items:center; gap:10px">
-            <i class="fas fa-arrow-left" onclick="trocarTela('login')" style="font-size:18px; color:#333; cursor:pointer"></i>
+            <i class="fas fa-arrow-left" onclick="voltarCadastro()" style="font-size:18px; color:#333; cursor:pointer"></i>
             <h2 style="color:var(--pe-blue); margin:0; font-size:16px">CADASTRO</h2>
         </div>
         <div style="width:100%; padding:20px; background:white; height:100%; overflow-y:auto;">
@@ -155,14 +155,9 @@
                 <input type="hidden" id="cad-cat-final">
             </div>
             
-            <div class="input-group" style="margin-top:15px"><label>SENHA</label><div class="input-wrapper" style="position:relative"><input type="password" id="cad-pass" style="padding-right:40px;"><i class="fas fa-eye pass-eye" onclick="togglePass('cad-pass')"></i></div></div>
-           
-            <div style="margin-top:20px; border-top:1px solid #eee; padding-top:10px">
-                <b style="color:var(--pe-blue); font-size:12px; display:block; margin-bottom:10px;">RECUPERAÇÃO</b>
-                <div class="input-group"><label>PALAVRA-CHAVE</label><div class="input-wrapper"><input id="cad-sec-a" class="uppercase-input" placeholder="Ex: Nome da mãe"></div></div>
-            </div>
-            
-            <button class="btn" onclick="cadastrar()">CONFIRMAR CADASTRO</button>
+            <div class="input-group" style="margin-top:15px"><label for="cad-pass">SENHA (MÍNIMO 6 CARACTERES)</label><div class="input-wrapper" style="position:relative"><input type="password" id="cad-pass" minlength="6" autocomplete="new-password" style="padding-right:40px;"><i class="fas fa-eye pass-eye" onclick="togglePass('cad-pass')"></i></div></div>
+            <div class="input-group"><label for="cad-pass-confirm">CONFIRME A SENHA</label><div class="input-wrapper" style="position:relative"><input type="password" id="cad-pass-confirm" minlength="6" autocomplete="new-password" style="padding-right:40px;"><i class="fas fa-eye pass-eye" onclick="togglePass('cad-pass-confirm')"></i></div></div>
+            <button class="btn" id="btn-confirmar-cadastro" onclick="cadastrar()">CONFIRMAR CADASTRO</button>
         </div>
     </div>
 
@@ -382,6 +377,17 @@
                     <input type="password" id="prof-new-pass" autocomplete="new-password" aria-label="Nova senha" placeholder="Nova senha (mín. 6 caracteres)">
                 </div>
                 <button class="btn" style="background:#333; margin-top:5px; padding:10px;" id="btn-update-profile-password" onclick="mudarSenhaPerfil()">ATUALIZAR SENHA</button>
+            </div>
+
+            <div style="background:white; padding:15px; border-radius:10px; margin:0 15px 20px 15px; border:1px dashed #ccc;">
+                <b style="font-size:12px; color:var(--pe-blue);">CHAVE PARA RECUPERAR MINHA SENHA</b>
+                <p style="margin:8px 0; font-size:12px;">Guarde sua chave individual em local seguro. Ela permite criar outra senha em Esqueci minha senha.</p>
+                <div class="input-group">
+                    <input id="prof-recovery-password" type="password" autocomplete="current-password" aria-label="Senha atual para gerar a chave" placeholder="Confirme sua senha atual">
+                </div>
+                <button type="button" id="btn-create-recovery-key" class="btn" onclick="gerarMinhaChaveRecuperacao()">GERAR CHAVE DE RECUPERAÇÃO</button>
+                <div id="prof-recovery-key-display" aria-live="polite" style="margin-top:12px; overflow-wrap:anywhere; user-select:all; font-family:monospace; font-weight:700;"></div>
+                <p id="prof-recovery-key-help" hidden style="font-size:12px; margin-top:8px;">Guarde agora sua chave de uso único. Uma nova geração substitui a anterior.</p>
             </div>
 
         </div>
@@ -712,6 +718,16 @@
                         </div>
                         <input type="text" id="adm-edit-user-search" placeholder="Buscar Nome/CPF..." class="input-field" oninput="filterPilots('edit-user', true)">
                         <div id="adm-edit-user-list" style="margin-top:10px; max-height:400px; overflow-y:auto"></div>
+                        <div style="margin:12px 0 0; padding:12px; border:1px solid #cbd5e1; border-radius:8px;">
+                            <b style="color:var(--pe-blue); font-size:12px;">RECUPERAR CADASTRO INCOMPLETO</b>
+                            <div class="input-group" style="margin-top:8px;">
+                                <label for="adm-incomplete-cpf">CPF DO ATLETA</label>
+                                <input type="tel" id="adm-incomplete-cpf" maxlength="14" oninput="mascaraCPF(this); document.getElementById('adm-incomplete-code').textContent=''" placeholder="000.000.000-00">
+                            </div>
+                            <button type="button" class="btn" id="btn-issue-incomplete-code" onclick="gerarCodigoCadastroIncompleto()">GERAR CÓDIGO TEMPORÁRIO (5 MIN)</button>
+                            <div id="adm-incomplete-code" aria-live="polite" style="margin-top:8px; font-weight:700; color:#d50000; user-select:all; font-family:monospace"></div>
+                        </div>
+
                     </div>
                     <button class="btn" style="background:#333; margin-top:20px" onclick="backToAdmMenu()">VOLTAR</button>
                 </div>
@@ -869,9 +885,19 @@
 <div class="modal-overlay" id="modal-recovery">
     <div class="modal-box">
         <h3 style="color:var(--pe-blue)">RECUPERAR ACESSO</h3>
-        <p style="margin:14px 0;">Informe o CPF do atleta e digite o código temporário no campo Senha. Toque em Acessar conta para criar sua nova senha. O código vale 5 minutos e só pode ser usado uma vez. Para recuperar uma conta administrativa, fale com o responsável pelo sistema.</p>
+        <p style="margin:14px 0;">Use a chave de recuperação que você guardou no Perfil para criar uma nova senha.</p>
+        <div class="input-group" style="text-align:left">
+            <label for="rec-cpf">CPF</label>
+            <input type="tel" id="rec-cpf" placeholder="000.000.000-00" maxlength="14" oninput="mascaraCPF(this)">
+        </div>
+        <div class="input-group" style="text-align:left">
+            <label for="rec-recovery-key">CHAVE DE RECUPERAÇÃO</label>
+            <input type="password" id="rec-recovery-key" autocomplete="off" spellcheck="false" placeholder="Sua chave CHAVE-...">
+        </div>
+        <button id="btn-recover-key" class="btn" type="button" onclick="recuperarComChave()">CRIAR NOVA SENHA</button>
+        <p style="margin:14px 0; font-size:12px;">Se ainda não guardou uma chave, solicite o código temporário ao suporte.</p>
         <a id="rec-support" class="header-support-btn" target="_blank" rel="noopener noreferrer"><i class="fab fa-whatsapp"></i> FALAR COM O SUPORTE</a>
-        <button class="btn" style="background:#ccc; color:#333; margin-top:10px;" onclick="fecharModal('modal-recovery')">FECHAR</button>
+        <button class="btn" style="background:#ccc; color:#333; margin-top:10px;" onclick="fecharRecuperacao()">FECHAR</button>
     </div>
 </div>
 
@@ -1728,7 +1754,7 @@ refreshListsOnly();
 <script src="maintenance.js?v=5"></script>
 <script src="maintenance-admin.js?v=1"></script>
 <script src="roster-policy.js?v=1"></script>
-<script src="script.js?v=183"></script>
+<script src="script.js?v=184"></script>
 <script src="login-recovery-ui.js?v=2"></script>
 <script src="direct-timing.js?v=5"></script>
 

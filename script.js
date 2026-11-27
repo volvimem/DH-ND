@@ -558,7 +558,7 @@ function setupAutoSave() {
     const elements = document.querySelectorAll('input:not([type="password"]):not([type="file"]), select, textarea');
     elements.forEach(el => {
         if(!el.id) return;
-        const ignoreList = ['login-cpf', 'login-pass', 'cad-nome', 'cad-cpf', 'cad-tel', 'cad-city', 'cad-uf', 'cad-gender', 'cad-nasc', 'cad-cat-override', 'cad-sec-a', 'cad-pass', 'adm-pass-check', 'prof-current-pass', 'prof-new-pass', 'backup-input-file', 'adm-res-idx-edit', 'adm-res-id', 'adm-evt-id-edit', 'adm-org-selected-cpf', 'super-edit-old-cpf', 'adm-edit-user-search', 'adm-cfg-search', 'adm-org-search', 'cad-cbc', 'prof-edit-cbc', 'super-edit-cbc'];
+        const ignoreList = ['login-cpf', 'login-pass', 'rec-cpf', 'adm-incomplete-cpf', 'cad-nome', 'cad-cpf', 'cad-tel', 'cad-city', 'cad-uf', 'cad-gender', 'cad-nasc', 'cad-cat-override', 'cad-sec-a', 'cad-pass', 'adm-pass-check', 'prof-current-pass', 'prof-new-pass', 'backup-input-file', 'adm-res-idx-edit', 'adm-res-id', 'adm-evt-id-edit', 'adm-org-selected-cpf', 'super-edit-old-cpf', 'adm-edit-user-search', 'adm-cfg-search', 'adm-org-search', 'cad-cbc', 'prof-edit-cbc', 'super-edit-cbc'];
         if(ignoreList.includes(el.id) || el.id === 'login-code') return;
         const savedVal = localStorage.getItem('autosave_' + el.id);
         if(savedVal !== null) { if(el.type === 'checkbox') el.checked = (savedVal === 'true'); else el.value = savedVal; }
@@ -1750,7 +1750,7 @@ document.querySelectorAll('.screen').forEach(e => e.classList.remove('active'));
 const head = document.getElementById('main-app-header'); if(id === 'app') { if(nav) nav.style.display='flex'; if(head) head.style.display='flex'; } else { if(nav) nav.style.display='none'; if(head) head.style.display='none'; } }
 function mostrarLoginInicial() {
     document.getElementById('lbl-season-year').innerText = SYSTEM_YEAR;
-    trocarTela(temporaryPasswordSetup ? 'password-setup' : 'login');
+    trocarTela(temporaryPasswordSetup ? 'password-setup' : showPendingRegistrationForm() ? 'cadastro' : 'login');
 }
 window.togglePass = function(id) { const input = document.getElementById(id); const icon = input.nextElementSibling;
 if (input.type === "password") { input.type = "text"; icon.classList.remove("fa-eye"); icon.classList.add("fa-eye-slash"); } else { input.type = "password"; icon.classList.remove("fa-eye-slash"); icon.classList.add("fa-eye"); } };
@@ -1984,6 +1984,83 @@ function selectAuthenticatedProfile(users, cpf, uid) {
 function loginProfileRoot() {
     return 'dhpe_v25_final_stable_fix';
 }
+
+let registrationAccountSaving = false;
+let pendingRegistrationIdentity = null;
+
+function matchesRegistrationSession(account, cpf) {
+    const email = cpf + '@dhpe.com.br';
+    const current = auth?.currentUser;
+    return !!account?.uid && current?.uid === account.uid &&
+        String(account.email || '').toLowerCase() === email &&
+        String(current.email || '').toLowerCase() === email;
+}
+
+async function requestRegistrationAction(action, cpf, account) {
+    if (!matchesRegistrationSession(account, cpf)) return false;
+    const callable = firebase.app().functions('us-central1').httpsCallable('issueAthleteTemporaryLogin');
+    const {data} = await callable({action, cpf});
+    return matchesRegistrationSession(account, cpf) && data?.allowed === true;
+}
+
+async function authorizeRegistration(cpf, account, created = false) {
+    if (!created && await requestRegistrationAction('registration-status', cpf, account)) return true;
+    if (DB_KEY !== loginProfileRoot() || !maintenanceAllowsApp() || !matchesRegistrationSession(account, cpf)) return false;
+    return requestRegistrationAction('registration-start', cpf, account);
+}
+
+function showPendingRegistrationForm() {
+    return !!pendingRegistrationIdentity &&
+        DB_KEY === loginProfileRoot() && maintenanceAllowsApp() &&
+        matchesRegistrationSession(pendingRegistrationIdentity, pendingRegistrationIdentity.cpf);
+}
+
+function openPendingRegistrationForm(cpf, account) {
+    pendingRegistrationIdentity = {cpf, uid:account.uid, email:account.email};
+    trocarTela('cadastro');
+}
+
+window.voltarCadastro = function() {
+    if (registrationAccountSaving) return;
+    pendingRegistrationIdentity = null;
+    for (const id of ['cad-pass', 'cad-pass-confirm']) {
+        const input = document.getElementById(id);
+        if (input) input.value = '';
+    }
+    mostrarLoginInicial();
+};
+
+async function offerPendingRegistration(cpf, account) {
+    try {
+        if (registrationAccountSaving || DB_KEY !== loginProfileRoot() || !maintenanceAllowsApp()) return false;
+        if (!await authorizeRegistration(cpf, account)) return false;
+        if (DB_KEY !== loginProfileRoot() || !maintenanceAllowsApp()) return false;
+        document.getElementById('cad-cpf').value = cpf.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4');
+        for (const id of ['login-pass', 'cad-pass', 'cad-pass-confirm']) {
+            const input = document.getElementById(id);
+            if (input) input.value = '';
+        }
+        loggedUser = null;
+        verifiedLoginIdentity = null;
+        openPendingRegistrationForm(cpf, account);
+        toast('CONTA VALIDADA. COMPLETE O CADASTRO E CONFIRME SUA SENHA.');
+        return true;
+    } catch (_) {
+        return false;
+    }
+}
+
+async function waitForRegistrationRoster(cpf, account) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+        if (!matchesRegistrationSession(account, cpf) || DB_KEY !== loginProfileRoot() ||
+            !maintenanceAllowsApp()) return false;
+        const refreshed = await confirmRosterFromFirebase();
+        if (refreshed && rosterReady() && matchesRegistrationSession(account, cpf) &&
+            DB_KEY === loginProfileRoot() && maintenanceAllowsApp()) return true;
+        if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 250));
+    }
+    return false;
+}
 async function finishLogin(cpfClean, remember, isRestoring = false) {
     const account = auth && auth.currentUser;
     const email = cpfClean + '@dhpe.com.br';
@@ -2027,6 +2104,7 @@ async function finishLogin(cpfClean, remember, isRestoring = false) {
         }
     }
     if (!result.user) {
+        if (result.code === 'profile/missing' && await offerPendingRegistration(cpfClean, account)) return true;
         toast(result.code === 'profile/missing'
             ? 'LOGIN VALIDADO, MAS O CADASTRO NÃO FOI ENCONTRADO. FALE COM O SUPORTE. [CAD-AUSENTE]'
             : 'LOGIN VALIDADO, MAS HÁ UMA DIVERGÊNCIA NO CADASTRO. FALE COM O SUPORTE. [CAD-VINCULO]', 'error');
@@ -2081,44 +2159,141 @@ window.fazerLogout = async function() {
     }
     mostrarLoginInicial();
 };
-let registrationAccountSaving = false;
 window.cadastrar = async function() {
     if (registrationAccountSaving) return;
-    if (!maintenanceAllowsApp()) return toast('CADASTROS PAUSADOS DURANTE A MANUTENÇÃO.', 'error'); 
-    const nome = document.getElementById('cad-nome').value.toUpperCase(); const cpf = document.getElementById('cad-cpf').value; const tel = document.getElementById('cad-tel').value;
-    const city = document.getElementById('cad-city').value.toUpperCase(); const uf = document.getElementById('cad-uf').value; const gender = document.getElementById('cad-gender').value; const pass = document.getElementById('cad-pass').value; const cat = document.getElementById('cad-cat-final').value;
-    const nasc = document.getElementById('cad-nasc').value; const secA = document.getElementById('cad-sec-a').value.toUpperCase(); const cbc = document.getElementById('cad-cbc') ? document.getElementById('cad-cbc').value : "";
-    if(!nome || !cpf || !tel || !city || !gender || !pass || !secA || !cat || !nasc) return toast("PREENCHA TUDO", "error");
-    if(!validarCPF(cleanCPF(cpf))) return toast("CPF INVÁLIDO! VERIFIQUE.", "error"); if(db.users.find(u => cleanCPF(u.cpf) === cleanCPF(cpf))) return toast("CPF JÁ CADASTRADO NO BANCO", "error");
-    if(pass.length < 6) return toast("A SENHA DEVE TER NO MÍNIMO 6 CARACTERES", "error");
-    if (!auth || DB_KEY.includes('archive') || !rosterReady()) {
+    if (!maintenanceAllowsApp()) return toast('CADASTROS PAUSADOS DURANTE A MANUTENÇÃO.', 'error');
+
+    const nome = document.getElementById('cad-nome').value.toUpperCase();
+    const cpf = document.getElementById('cad-cpf').value;
+    const cpfClean = cleanCPF(cpf);
+    const tel = document.getElementById('cad-tel').value;
+    const city = document.getElementById('cad-city').value.toUpperCase();
+    const uf = document.getElementById('cad-uf').value;
+    const gender = document.getElementById('cad-gender').value;
+    const pass = document.getElementById('cad-pass').value;
+    const confirmInput = document.getElementById('cad-pass-confirm');
+    const cat = document.getElementById('cad-cat-final').value;
+    const nasc = document.getElementById('cad-nasc').value;
+    const cbc = document.getElementById('cad-cbc')?.value || '';
+    if (!confirmInput) return toast('ATUALIZE O APP PARA CONFIRMAR SUA SENHA NO CADASTRO.', 'error');
+    if (!nome || !cpf || !tel || !city || !gender || !pass || !cat || !nasc) return toast('PREENCHA TUDO', 'error');
+    if (!validarCPF(cpfClean)) return toast('CPF INVÁLIDO! VERIFIQUE.', 'error');
+    if (pass.length < 6) return toast('A SENHA DEVE TER NO MÍNIMO 6 CARACTERES', 'error');
+    if (pass !== confirmInput.value) return toast('AS SENHAS NÃO COINCIDEM. CONFIRA OS DOIS CAMPOS.', 'error');
+    if (!auth || DB_KEY !== loginProfileRoot() ||
+        (!rosterReady() && !matchesRegistrationSession(auth.currentUser, cpfClean))) {
         return toast('AGUARDE A ATUALIZAÇÃO DOS CADASTROS ANTES DE CRIAR A CONTA.', 'error');
     }
-    const email = cleanCPF(cpf) + '@dhpe.com.br';
+    if (rosterReady() && db.users.some(user => cleanCPF(user.cpf) === cpfClean)) {
+        return toast('CPF JÁ CADASTRADO. ENTRE COM SUA SENHA.', 'error');
+    }
+
+    const email = cpfClean + '@dhpe.com.br';
+    const button = document.getElementById('btn-confirmar-cadastro');
     registrationAccountSaving = true;
+    if (button) button.disabled = true;
     toast('CRIANDO CONTA...', 'info');
     try {
-        const credential = await auth.createUserWithEmailAndPassword(email, pass);
+        let credential;
+        let created = false;
+        if (matchesRegistrationSession(auth.currentUser, cpfClean)) {
+            // Entrar novamente comprova que a senha confirmada pertence à conta pendente.
+            credential = await auth.signInWithEmailAndPassword(email, pass);
+        } else {
+            try {
+                credential = await auth.createUserWithEmailAndPassword(email, pass);
+                created = true;
+            } catch (error) {
+                if (error.code !== 'auth/email-already-in-use') throw error;
+                credential = await auth.signInWithEmailAndPassword(email, pass);
+            }
+        }
+        const account = credential.user;
+        if (!matchesRegistrationSession(account, cpfClean)) {
+            return toast('SESSÃO NÃO CONFIRMADA. ENTRE NOVAMENTE.', 'error');
+        }
+        const allowed = await authorizeRegistration(cpfClean, account, created);
+        if (!allowed) return toast('NÃO FOI POSSÍVEL CONCLUIR ESTE CADASTRO. CONFIRA SUA CONTA OU FALE COM O SUPORTE.', 'error');
+        if (!maintenanceAllowsApp() || DB_KEY !== loginProfileRoot()) {
+            return toast('CADASTRO PAUSADO. ENTRE NOVAMENTE PARA CONCLUIR.', 'error');
+        }
+        openPendingRegistrationForm(cpfClean, account);
+        if (!await waitForRegistrationRoster(cpfClean, account)) {
+            return toast('CONTA VALIDADA. AGUARDE A ATUALIZAÇÃO E TENTE CONFIRMAR O CADASTRO NOVAMENTE.', 'error');
+        }
+        if (db.users.some(user => user.uid === account.uid || cleanCPF(user.cpf) === cpfClean)) {
+            return toast('JÁ EXISTE UM CADASTRO VINCULADO. ENTRE COM SUA SENHA OU FALE COM O SUPORTE.', 'error');
+        }
+
         const user = {
-            uid:credential.user.uid, nome, cpf, tel, city, uf, gender, cat, nasc, secA, team:'', cbc,
+            uid:account.uid, nome, cpf, tel, city, uf, gender, cat, nasc, team:'', cbc,
             role:'USER', inscricoes:[], selfie:null, allowedEvts:[], idReleased:false, filiadoPE:false
         };
         if (!await saveDB('users', {create:user})) return;
-        window.enviarNotificacao('Novo atleta cadastrado no sistema: ' + nome + ' (' + city + '-' + uf + ').', 'ADMIN', null, null);
-        loggedUser = db.users.find(profile => profile.uid === user.uid) || user;
-        updateSessionStorage();
-        toast('CADASTRO REALIZADO COM SUCESSO!');
-        initApp(false);
+        pendingRegistrationIdentity = null;
+        document.getElementById('cad-pass').value = '';
+        confirmInput.value = '';
+        const remember = document.getElementById('login-remember')?.checked ?? false;
+        if (!matchesRegistrationSession(account, cpfClean) || !await finishLogin(cpfClean, remember)) {
+            return toast('CADASTRO SALVO. ENTRE COM SUA SENHA PARA ACESSAR O APP.');
+        }
+        try {
+            await requestRegistrationAction('registration-finish', cpfClean, account);
+        } catch (_) {
+            // O perfil já foi confirmado; uma próxima entrada continua sendo possível.
+        }
+        if (matchesRegistrationSession(account, cpfClean)) {
+            toast('CADASTRO REALIZADO COM SUCESSO!');
+            try {
+                await window.enviarNotificacao('Novo atleta cadastrado no sistema: ' + nome + ' (' + city + '-' + uf + ').', 'ADMIN', null, null);
+            } catch (_) {}
+        }
     } catch (error) {
-        toast(error.code === 'auth/email-already-in-use' ? 'ESTE CPF JÁ ESTÁ REGISTRADO NO FIREBASE' : 'NÃO FOI POSSÍVEL CRIAR A CONTA. TENTE NOVAMENTE.', 'error');
+        const message = error?.code === 'auth/user-disabled'
+            ? 'O ACESSO DESTA CONTA ESTÁ DESATIVADO. FALE COM O SUPORTE.'
+            : 'NÃO FOI POSSÍVEL CONCLUIR A CONTA. CONFIRA A SENHA E TENTE NOVAMENTE OU FALE COM O SUPORTE.';
+        toast(message, 'error');
     } finally {
         registrationAccountSaving = false;
+        if (button) button.disabled = false;
     }
 };
 
 window.abrirModalRecovery = function() {
     document.getElementById('rec-support').href = document.getElementById('btn-support-login').href;
+    document.getElementById('rec-cpf').value = document.getElementById('login-cpf').value;
+    document.getElementById('rec-recovery-key').value = '';
     openModal('modal-recovery');
+};
+
+window.fecharRecuperacao = function() {
+    if (document.getElementById('btn-recover-key').disabled) return;
+    document.getElementById('rec-recovery-key').value = '';
+    fecharModal('modal-recovery');
+};
+
+window.recuperarComChave = async function() {
+    const cpf = cleanCPF(document.getElementById('rec-cpf').value);
+    const input = document.getElementById('rec-recovery-key');
+    const code = input.value.trim();
+    const button = document.getElementById('btn-recover-key');
+    if (loginInProgress || button.disabled) return;
+    if (!/^\d{11}$/.test(cpf) || !/^CHAVE-[A-Za-z0-9_-]{22}$/.test(code)) {
+        return toast('CONFIRA O CPF E A CHAVE DE RECUPERAÇÃO GERADA NO PERFIL.', 'error');
+    }
+    button.disabled = true;
+    try {
+        const data = await requestTemporaryPasswordReset(cpf, code);
+        input.value = '';
+        fecharModal('modal-recovery');
+        openTemporaryPasswordSetup({cpf, remember:document.getElementById('login-remember').checked, resetCode:data.resetCode, uid:data.uid});
+    } catch (error) {
+        toast(error?.code === 'functions/permission-denied'
+            ? 'CHAVE INVÁLIDA OU JÁ USADA. CONFIRA OS DADOS OU FALE COM O SUPORTE.'
+            : 'NÃO FOI POSSÍVEL VALIDAR A CHAVE. VERIFIQUE A CONEXÃO.', 'error');
+    } finally {
+        button.disabled = false;
+    }
 };
 function initApp(isRestoring = false) {
     if (!maintenanceAllowsApp()) { window.dhndMaintenance.refreshIdentity(); return; }
@@ -2256,7 +2431,7 @@ if (btnAdm) {
 }
 
 
-function nav(t) { if (!maintenanceAllowsApp()) return; currentTab = t;
+function nav(t) { if (!maintenanceAllowsApp()) return; if (t !== 'profile') clearProfileRecoveryKey(); currentTab = t;
 try { localStorage.setItem(LAST_TAB_KEY, t); } catch (_) {} document.querySelectorAll('.bar-item').forEach(b => b.classList.remove('active')); if(document.getElementById('btn-'+t)) document.getElementById('btn-'+t).classList.add('active');
 document.querySelectorAll('.c-sec').forEach(e => { e.style.display='none'; e.classList.remove('active'); }); const activeSec = document.getElementById('cont-'+t); if(activeSec) { activeSec.style.display='block'; activeSec.classList.add('active');
 } if(t === 'tempos' || t === 'ranking') populatePublicFilters(t); if(t === 'profile') { updateCardLive(); loadProfileData(); } if(t === 'adm') tryOpenAdmin(true);
@@ -2301,6 +2476,51 @@ function getAuthenticatedProfileAccount(profile) {
     if (!uid || account?.uid !== uid || account.email?.toLowerCase() !== cpf + '@dhpe.com.br') return null;
     return account;
 }
+
+function clearProfileRecoveryKey() {
+    const pass = document.getElementById('prof-recovery-password');
+    const display = document.getElementById('prof-recovery-key-display');
+    const help = document.getElementById('prof-recovery-key-help');
+    if (pass) pass.value = '';
+    if (display) display.textContent = '';
+    if (help) help.hidden = true;
+}
+
+window.gerarMinhaChaveRecuperacao = async function() {
+    const profile = loggedUser;
+    const account = getAuthenticatedProfileAccount(profile);
+    if (!account || isSuperAdmin(profile) || profile.role === 'ADMIN' || profile.role === 'ORGANIZER') {
+        return toast('A RECUPERAÇÃO POR CHAVE ESTÁ DISPONÍVEL PARA ATLETAS AUTENTICADOS.', 'error');
+    }
+    const password = document.getElementById('prof-recovery-password');
+    const display = document.getElementById('prof-recovery-key-display');
+    const help = document.getElementById('prof-recovery-key-help');
+    const button = document.getElementById('btn-create-recovery-key');
+    if (button.disabled) return;
+    if (!password.value) return toast('INFORME SUA SENHA ATUAL.', 'error');
+    button.disabled = true;
+    display.textContent = '';
+    help.hidden = true;
+    try {
+        const credential = firebase.auth.EmailAuthProvider.credential(account.email, password.value.padEnd(6, '0'));
+        await account.reauthenticateWithCredential(credential);
+        await account.getIdToken(true);
+        if (getAuthenticatedProfileAccount(loggedUser) !== account || currentTab !== 'profile') return;
+        const issue = firebase.app().functions('us-central1').httpsCallable('issueAthleteTemporaryLogin');
+        const {data} = await issue({action:'recovery-key', cpf:cleanCPF(profile.cpf)});
+        if (getAuthenticatedProfileAccount(loggedUser) !== account || currentTab !== 'profile') return;
+        if (typeof data?.code !== 'string' || !/^CHAVE-[A-Za-z0-9_-]{22}$/.test(data.code)) throw new Error('Chave inválida');
+        display.textContent = data.code;
+        help.hidden = false;
+        password.value = '';
+        toast('CHAVE DE RECUPERAÇÃO GERADA. GUARDE-A EM LOCAL SEGURO.');
+    } catch (error) {
+        const wrongPassword = ['auth/wrong-password','auth/invalid-credential','auth/invalid-login-credentials'].includes(error?.code);
+        toast(wrongPassword ? 'SENHA ATUAL INCORRETA.' : 'NÃO FOI POSSÍVEL GERAR A CHAVE. ENTRE NOVAMENTE E TENTE OUTRA VEZ.', 'error');
+    } finally {
+        button.disabled = false;
+    }
+};
 
 let profilePasswordSaving = false;
 window.mudarSenhaPerfil = async function() {
@@ -5773,6 +5993,33 @@ window.saveSuperEdit = async function() {
         if(changes.length > 0) { window.logAction(`Editou o atleta ${oldU.nome}. Alterações: ${changes.join(' | ')}`); } else { window.logAction(`Acessou a edição do atleta ${oldU.nome} sem realizar mudanças.`); }
         toast("ALTERADO!"); fecharModal('modal-super-edit'); filterPilots('edit-user', true);
     } 
+};
+
+window.gerarCodigoCadastroIncompleto = async function() {
+    const account = getAuthenticatedProfileAccount(loggedUser);
+    if (!account || !isSuperAdmin(loggedUser)) return toast('APENAS O SUPER ADM PODE GERAR ESTE CÓDIGO.', 'error');
+    const input = document.getElementById('adm-incomplete-cpf');
+    const cpf = cleanCPF(input.value);
+    const button = document.getElementById('btn-issue-incomplete-code');
+    const display = document.getElementById('adm-incomplete-code');
+    if (button.disabled) return;
+    if (!/^\d{11}$/.test(cpf)) return toast('INFORME O CPF DO ATLETA.', 'error');
+    button.disabled = true;
+    display.textContent = '';
+    try {
+        const issue = firebase.app().functions('us-central1').httpsCallable('issueAthleteTemporaryLogin');
+        const {data} = await issue({cpf, format:'pin'});
+        if (!isSuperAdmin(loggedUser) || getAuthenticatedProfileAccount(loggedUser) !== account || cleanCPF(input.value) !== cpf) return;
+        if (typeof data?.code !== 'string' || !/^\d{6}$/.test(data.code)) throw new Error('Código inválido');
+        display.textContent = data.code;
+        toast('CÓDIGO GERADO. INFORME AO ATLETA PARA CONCLUIR O CADASTRO.');
+    } catch (error) {
+        toast(error?.code === 'functions/failed-precondition'
+            ? 'O CPF NÃO POSSUI UMA CONTA E UM CADASTRO PENDENTE AUTORIZADO.'
+            : 'NÃO FOI POSSÍVEL GERAR O CÓDIGO. TENTE NOVAMENTE.', 'error');
+    } finally {
+        button.disabled = false;
+    }
 };
 
 window.gerarSenhaTemporaria = async function() {

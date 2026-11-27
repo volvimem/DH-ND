@@ -114,7 +114,7 @@ self.addEventListener("notificationclick", (event) => {
 // ==========================================================
 // PARTE 2: PWA E CACHE
 // ==========================================================
-const CACHE_NAME = 'dhnd-nordeste-20261127';
+const CACHE_NAME = 'dhnd-registration-recovery-logo-20261127';
 const APP_SCOPE = new URL(self.registration.scope);
 const STATIC_CACHE_PREFIX = `dhnd-official-static:${APP_SCOPE.href}:`;
 const STATIC_CACHE = STATIC_CACHE_PREFIX + CACHE_NAME;
@@ -122,7 +122,7 @@ const STATIC_CACHE = STATIC_CACHE_PREFIX + CACHE_NAME;
 const PUBLIC_FILES = new Set([
     'script.js', 'style.css', 'direct-timing.js', 'direct-timing.css',
     'season-policy.js', 'ranking-policy.js', 'maintenance.js', 'maintenance-admin.js',
-    'roster-policy.js', 'dhclub.js', 'dhclub.css', 'manifest.json', 'logo.png',
+    'roster-policy.js', 'dhclub.js', 'dhclub.css', 'manifest.json', 'logo.png', 'logo-login.png',
     'mobile-navigation.js', 'icons/dh-nordeste-192.png', 'icons/dh-nordeste-512.png'
 ]);
 const PUBLIC_CDN = [
