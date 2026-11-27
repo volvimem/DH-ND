@@ -1998,14 +1998,39 @@ function matchesRegistrationSession(account, cpf) {
 
 async function requestRegistrationAction(action, cpf, account) {
     if (!matchesRegistrationSession(account, cpf)) return false;
-    const callable = firebase.app().functions('us-central1').httpsCallable('issueAthleteTemporaryLogin');
-    const {data} = await callable({action, cpf});
-    return matchesRegistrationSession(account, cpf) && data?.allowed === true;
+    const callable = firebase.app().functions('us-central1').httpsCallable('issueAthleteTemporaryLogin', {timeout: 12000});
+    try {
+        const {data} = await callable({action, cpf});
+        return matchesRegistrationSession(account, cpf) && data?.allowed === true;
+    } catch (error) {
+        // Only retry the read-only status check, retaining the same authenticated account.
+        const retryable = ['functions/unauthenticated', 'functions/unavailable', 'functions/deadline-exceeded', 'functions/internal'].includes(error?.code);
+        if (action !== 'registration-status' || !retryable || !matchesRegistrationSession(account, cpf)) throw error;
+        await account.getIdToken(true);
+        if (!matchesRegistrationSession(account, cpf)) return false;
+        const {data} = await callable({action, cpf});
+        return matchesRegistrationSession(account, cpf) && data?.allowed === true;
+    }
+}
+
+async function waitForRegistrationPolicy(cpf, account) {
+    if (DB_KEY !== loginProfileRoot() || !matchesRegistrationSession(account, cpf)) return false;
+    if (maintenanceAllowsApp()) return true;
+    // The maintenance controller may be refreshing after authentication. Wait for
+    // its own server verification, never grant access from an unverified policy.
+    const controller = window.dhndMaintenance;
+    if (!controller?.refreshIdentity) return false;
+    try {
+        await awaitWithTimeout(controller.refreshIdentity(), 14000, 'registration/policy', 'Verificação de disponibilidade pendente');
+    } catch (_) {
+        return false;
+    }
+    return DB_KEY === loginProfileRoot() && matchesRegistrationSession(account, cpf) && maintenanceAllowsApp();
 }
 
 async function authorizeRegistration(cpf, account, created = false) {
     if (!created && await requestRegistrationAction('registration-status', cpf, account)) return true;
-    if (DB_KEY !== loginProfileRoot() || !maintenanceAllowsApp() || !matchesRegistrationSession(account, cpf)) return false;
+    if (!await waitForRegistrationPolicy(cpf, account)) return false;
     return requestRegistrationAction('registration-start', cpf, account);
 }
 
@@ -2017,12 +2042,16 @@ function showPendingRegistrationForm() {
 
 function openPendingRegistrationForm(cpf, account) {
     pendingRegistrationIdentity = {cpf, uid:account.uid, email:account.email};
+    const cpfField = document.getElementById('cad-cpf');
+    if (cpfField) cpfField.readOnly = true;
     trocarTela('cadastro');
 }
 
 window.voltarCadastro = function() {
     if (registrationAccountSaving) return;
     pendingRegistrationIdentity = null;
+    const cpfField = document.getElementById('cad-cpf');
+    if (cpfField) cpfField.readOnly = false;
     for (const id of ['cad-pass', 'cad-pass-confirm']) {
         const input = document.getElementById(id);
         if (input) input.value = '';
@@ -2031,10 +2060,12 @@ window.voltarCadastro = function() {
 };
 
 async function offerPendingRegistration(cpf, account) {
+    if (registrationAccountSaving) return false;
+    if (DB_KEY !== loginProfileRoot()) throw Object.assign(new Error('Cadastro disponível apenas na base atual'), {code:'registration/archive'});
+    if (!await waitForRegistrationPolicy(cpf, account)) throw Object.assign(new Error('Cadastro temporariamente indisponível'), {code:'registration/policy'});
     try {
-        if (registrationAccountSaving || DB_KEY !== loginProfileRoot() || !maintenanceAllowsApp()) return false;
         if (!await authorizeRegistration(cpf, account)) return false;
-        if (DB_KEY !== loginProfileRoot() || !maintenanceAllowsApp()) return false;
+        if (!await waitForRegistrationPolicy(cpf, account)) throw Object.assign(new Error('Cadastro temporariamente indisponível'), {code:'registration/policy'});
         document.getElementById('cad-cpf').value = cpf.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4');
         for (const id of ['login-pass', 'cad-pass', 'cad-pass-confirm']) {
             const input = document.getElementById(id);
@@ -2045,8 +2076,9 @@ async function offerPendingRegistration(cpf, account) {
         openPendingRegistrationForm(cpf, account);
         toast('CONTA VALIDADA. COMPLETE O CADASTRO E CONFIRME SUA SENHA.');
         return true;
-    } catch (_) {
-        return false;
+    } catch (error) {
+        if (error?.code === 'functions/failed-precondition' || error?.code === 'functions/permission-denied') return false;
+        throw error;
     }
 }
 
@@ -2104,7 +2136,20 @@ async function finishLogin(cpfClean, remember, isRestoring = false) {
         }
     }
     if (!result.user) {
-        if (result.code === 'profile/missing' && await offerPendingRegistration(cpfClean, account)) return true;
+        if (result.code === 'profile/missing') {
+            try {
+                if (await offerPendingRegistration(cpfClean, account)) return true;
+            } catch (error) {
+                if (!sameSession()) return false;
+                const messages = {
+                    'registration/archive':'LOGIN VALIDADO. VOLTE À TEMPORADA ATUAL PARA CONCLUIR SEU CADASTRO. [CAD-ANO]',
+                    'registration/policy':'LOGIN VALIDADO. CADASTRO TEMPORARIAMENTE INDISPONÍVEL. AGUARDE E TENTE NOVAMENTE. [CAD-PAUSA]'
+                };
+                toast(messages[error?.code] || 'LOGIN VALIDADO. NÃO FOI POSSÍVEL VERIFICAR O CADASTRO AGORA. TENTE NOVAMENTE. [CAD-SERVIÇO]', 'error');
+                return false;
+            }
+        }
+        if (!sameSession()) return false;
         toast(result.code === 'profile/missing'
             ? 'LOGIN VALIDADO, MAS O CADASTRO NÃO FOI ENCONTRADO. FALE COM O SUPORTE. [CAD-AUSENTE]'
             : 'LOGIN VALIDADO, MAS HÁ UMA DIVERGÊNCIA NO CADASTRO. FALE COM O SUPORTE. [CAD-VINCULO]', 'error');
