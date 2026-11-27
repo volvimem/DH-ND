@@ -856,3 +856,10 @@ body:before{content:"";position:fixed;inset:0;background-image:linear-gradient(r
 
   font-size: 4.8px;
 }
+
+
+.club-logo-mark img { width: 100%; height: 100%; object-fit: contain; }
+@media screen {
+  html[data-mobile-editing] .club-nav { display: none !important; }
+  html[data-mobile-editing] .app-shell { padding-bottom: 0; }
+}
